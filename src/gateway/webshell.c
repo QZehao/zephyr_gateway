@@ -9,12 +9,6 @@
 #include "webshell.h"
 #include "gateway_events.h"
 #include "gateway_config.h"
-#include "protocol_can.h"
-#include "protocol_modbus.h"
-#include "protocol_eth.h"
-#include "cloud_upload.h"
-#include "offline_cache.h"
-#include "anomaly_detection.h"
 #include "app_config.h"
 
 #include <zephyr/init.h>
@@ -26,6 +20,24 @@
 
 #include "event_system.h"
 #include "module_manager.h"
+
+/* 条件 include：模块禁用时避免引用未编译的符号 */
+#if GATEWAY_CAN_ENABLE
+#include "protocol_can.h"
+#endif
+#if GATEWAY_MODBUS_ENABLE
+#include "protocol_modbus.h"
+#endif
+#if GATEWAY_MQTT_ENABLE
+#include "protocol_eth.h"
+#include "cloud_upload.h"
+#endif
+#if GATEWAY_ANOMALY_ENABLE
+#include "anomaly_detection.h"
+#endif
+#if GATEWAY_OFFLINE_CACHE_ENABLE
+#include "offline_cache.h"
+#endif
 
 LOG_MODULE_REGISTER(webshell, CONFIG_SYS_LOG_LEVEL);
 
@@ -40,6 +52,41 @@ typedef struct {
 static webshell_cb_t g_ws;
 
 /* =============================================================================
+ * 辅助函数
+ * ============================================================================= */
+
+static void print_module_status(const struct shell* sh, const char* label, const char* module_name)
+{
+    uint32_t module_id = module_manager_get_id_by_name(module_name);
+    const char* status_str = "N/A (未注册)";
+
+    if (module_id != 0) {
+        module_info_t info;
+        if (module_manager_get_module_info(module_id, &info) == 0) {
+            switch (info.status) {
+            case MODULE_STATUS_RUNNING:
+                status_str = "RUNNING";
+                break;
+            case MODULE_STATUS_INITIALIZED:
+                status_str = "INITIALIZED";
+                break;
+            case MODULE_STATUS_STOPPED:
+                status_str = "STOPPED";
+                break;
+            case MODULE_STATUS_ERROR:
+                status_str = "ERROR";
+                break;
+            default:
+                status_str = "UNKNOWN";
+                break;
+            }
+        }
+    }
+
+    shell_print(sh, "%-10s %s", label, status_str);
+}
+
+/* =============================================================================
  * Shell 命令实现
  * ============================================================================= */
 
@@ -49,44 +96,19 @@ static int cmd_gateway_status(const struct shell* sh, size_t argc, char** argv)
     ARG_UNUSED(argv);
 
     shell_print(sh, "=== 工业网关状态 ===");
-
-    /* 模块状态 */
-    extern const module_interface_t protocol_can_interface;
-    extern const module_interface_t protocol_modbus_interface;
-    extern const module_interface_t protocol_eth_interface;
-    extern const module_interface_t anomaly_detection_interface;
-    extern const module_interface_t cloud_upload_interface;
-    extern const module_interface_t offline_cache_interface;
-
-    shell_print(sh, "CAN:        %s",
-                protocol_can_interface.get_status ?
-                (protocol_can_interface.get_status() == MODULE_STATUS_RUNNING ? "RUNNING" : "STOPPED") :
-                "N/A");
-    shell_print(sh, "Modbus:     %s",
-                protocol_modbus_interface.get_status ?
-                (protocol_modbus_interface.get_status() == MODULE_STATUS_RUNNING ? "RUNNING" : "STOPPED") :
-                "N/A");
-    shell_print(sh, "Ethernet:   %s (MQTT %s)",
-                protocol_eth_interface.get_status ?
-                (protocol_eth_interface.get_status() == MODULE_STATUS_RUNNING ? "RUNNING" : "STOPPED") :
-                "N/A",
-                protocol_eth_is_connected() ? "connected" : "disconnected");
-    shell_print(sh, "Anomaly:    %s",
-                anomaly_detection_interface.get_status ?
-                (anomaly_detection_interface.get_status() == MODULE_STATUS_RUNNING ? "RUNNING" : "STOPPED") :
-                "N/A");
-    shell_print(sh, "Cloud:      %s",
-                cloud_upload_interface.get_status ?
-                (cloud_upload_interface.get_status() == MODULE_STATUS_RUNNING ? "RUNNING" : "STOPPED") :
-                "N/A");
-    shell_print(sh, "Cache:      %s",
-                offline_cache_interface.get_status ?
-                (offline_cache_interface.get_status() == MODULE_STATUS_RUNNING ? "RUNNING" : "STOPPED") :
-                "N/A");
+    shell_print(sh, "  协议层:");
+    print_module_status(sh, "CAN:", "protocol_can");
+    print_module_status(sh, "Modbus:", "protocol_modbus");
+    print_module_status(sh, "Ethernet:", "protocol_eth");
+    shell_print(sh, "  业务层:");
+    print_module_status(sh, "Anomaly:", "anomaly_detection");
+    print_module_status(sh, "Cloud:", "cloud_upload");
+    print_module_status(sh, "Cache:", "offline_cache");
 
     return 0;
 }
 
+#if GATEWAY_CAN_ENABLE
 static int cmd_can_stats(const struct shell* sh, size_t argc, char** argv)
 {
     ARG_UNUSED(argc);
@@ -102,7 +124,9 @@ static int cmd_can_stats(const struct shell* sh, size_t argc, char** argv)
 
     return 0;
 }
+#endif
 
+#if GATEWAY_MODBUS_ENABLE
 static int cmd_modbus_read(const struct shell* sh, size_t argc, char** argv)
 {
     if (argc < 3) {
@@ -132,7 +156,9 @@ static int cmd_modbus_read(const struct shell* sh, size_t argc, char** argv)
 
     return ret;
 }
+#endif
 
+#if GATEWAY_ANOMALY_ENABLE
 static int cmd_anomaly_config(const struct shell* sh, size_t argc, char** argv)
 {
     if (argc < 4) {
@@ -156,7 +182,9 @@ static int cmd_anomaly_config(const struct shell* sh, size_t argc, char** argv)
 
     return ret;
 }
+#endif
 
+#if GATEWAY_MQTT_ENABLE
 static int cmd_cloud_status(const struct shell* sh, size_t argc, char** argv)
 {
     ARG_UNUSED(argc);
@@ -182,7 +210,9 @@ static int cmd_cloud_status(const struct shell* sh, size_t argc, char** argv)
 
     return 0;
 }
+#endif
 
+#if GATEWAY_OFFLINE_CACHE_ENABLE
 static int cmd_cache_info(const struct shell* sh, size_t argc, char** argv)
 {
     ARG_UNUSED(argc);
@@ -203,16 +233,20 @@ static int cmd_cache_clear(const struct shell* sh, size_t argc, char** argv)
     ARG_UNUSED(argc);
     ARG_UNUSED(argv);
 
-    extern const module_interface_t offline_cache_interface;
-    if (offline_cache_interface.control) {
-        offline_cache_interface.control(CACHE_CMD_CLEAR, NULL);
+    uint32_t module_id = module_manager_get_id_by_name("offline_cache");
+    if (module_id != 0) {
+        module_info_t info;
+        if (module_manager_get_module_info(module_id, &info) == 0 && info.interface != NULL && info.interface->control) {
+            info.interface->control(CACHE_CMD_CLEAR, NULL);
+        }
     }
     shell_print(sh, "离线缓存已清空");
     return 0;
 }
+#endif
 
 /* =============================================================================
- * Shell 命令注册
+ * Shell 命令注册（条件编译：模块禁用时不注册对应命令）
  * ============================================================================= */
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
@@ -220,38 +254,58 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD(status, NULL, "显示网关模块状态", cmd_gateway_status),
     SHELL_SUBCMD_SET_END);
 
+#if GATEWAY_CAN_ENABLE
 SHELL_STATIC_SUBCMD_SET_CREATE(
     can_cmds,
     SHELL_CMD(stats, NULL, "显示 CAN 统计", cmd_can_stats),
     SHELL_SUBCMD_SET_END);
+#endif
 
+#if GATEWAY_MODBUS_ENABLE
 SHELL_STATIC_SUBCMD_SET_CREATE(
     modbus_cmds,
     SHELL_CMD(read, NULL, "读取 Modbus 保持寄存器: read <addr> <count>", cmd_modbus_read),
     SHELL_SUBCMD_SET_END);
+#endif
 
+#if GATEWAY_ANOMALY_ENABLE
 SHELL_STATIC_SUBCMD_SET_CREATE(
     anomaly_cmds,
     SHELL_CMD(config, NULL, "配置异常检测阈值: config <sensor> <w> <c> [e]", cmd_anomaly_config),
     SHELL_SUBCMD_SET_END);
+#endif
 
+#if GATEWAY_MQTT_ENABLE
 SHELL_STATIC_SUBCMD_SET_CREATE(
     cloud_cmds,
     SHELL_CMD(status, NULL, "显示云端连接状态", cmd_cloud_status),
     SHELL_SUBCMD_SET_END);
+#endif
 
+#if GATEWAY_OFFLINE_CACHE_ENABLE
 SHELL_STATIC_SUBCMD_SET_CREATE(
     cache_cmds,
     SHELL_CMD(info, NULL, "显示离线缓存信息", cmd_cache_info),
     SHELL_CMD(clear, NULL, "清空离线缓存", cmd_cache_clear),
     SHELL_SUBCMD_SET_END);
+#endif
 
 SHELL_CMD_REGISTER(gateway, &gateway_cmds, "工业网关命令", NULL);
+#if GATEWAY_CAN_ENABLE
 SHELL_CMD_REGISTER(can, &can_cmds, "CAN 总线命令", NULL);
+#endif
+#if GATEWAY_MODBUS_ENABLE
 SHELL_CMD_REGISTER(modbus, &modbus_cmds, "Modbus 命令", NULL);
+#endif
+#if GATEWAY_ANOMALY_ENABLE
 SHELL_CMD_REGISTER(anomaly, &anomaly_cmds, "异常检测命令", NULL);
+#endif
+#if GATEWAY_MQTT_ENABLE
 SHELL_CMD_REGISTER(cloud, &cloud_cmds, "云端连接命令", NULL);
+#endif
+#if GATEWAY_OFFLINE_CACHE_ENABLE
 SHELL_CMD_REGISTER(cache, &cache_cmds, "离线缓存命令", NULL);
+#endif
 
 /* =============================================================================
  * 模块接口实现
