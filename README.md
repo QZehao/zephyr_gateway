@@ -1,57 +1,50 @@
 # zephyr_gateway
 
-基于 [zephyr_framework](https://github.com/QZehao/zephyr_framework) 的业务仓库：**`framework/` 子模块可与上游完全一致**（不改其中任何已跟踪文件）；产品代码放在仓库根目录 **`src/`**，通过 Zephyr **树外模块** `modules/zephyr_gateway/` 编进固件。
+基于 [zephyr_framework](https://github.com/QZehao/zephyr_framework) 的业务仓库：`framework/` 为子模块；业务在 **`src/`**，经树外模块 **`modules/zephyr_gateway/`** 编入固件。
 
-## 目录约定
+## `framework/CMakeLists.txt` 的改动（兼容两种用法）
 
-| 路径 | 说明 |
-|------|------|
-| `framework/` | 上游 `zephyr_framework` 子模块；保持 `git clean` 与上游一致即可 |
-| `src/` | 业务源码（示例：`src/gateway/`） |
-| `modules/zephyr_gateway/` | Zephyr 树外模块（`zephyr/module.yml` + `CMakeLists.txt` + `Kconfig`） |
-| `gateway_prj.conf` | 业务 `CONFIG_*`（含 `CONFIG_ZEPHYR_GATEWAY_BUSINESS`） |
-| `env.example` | 将 `ZEPHYR_EXTRA_MODULES` 写进 **`framework/zephyr_config.env`** 的示例（该 env 文件被 gitignore） |
+- **`FW_APP_ROOT`**：始终等于本 `CMakeLists.txt` 所在目录。单独 `west build … framework` 时与原先 `CMAKE_SOURCE_DIR` 等价；被仓库根 `add_subdirectory(framework)` 时仍指向 `framework/` 内的 `src` 与生成头路径。
+- **`ZEPHYR_GATEWAY_TOPLEVEL_BOOTSTRAP`**：仅当仓库根已执行 `find_package(Zephyr)` + `project()` 时，在子目录内跳过重复引导（避免 Windows 下误链主机库）。**仅克隆 framework、无外部根 CMake 时该变量未定义，行为与上游一致。**
 
-## 原理（为何不碰框架文件）
-
-Zephyr 支持环境变量 **`ZEPHYR_EXTRA_MODULES`**：指向若干模块根目录后，构建 **`framework/` 应用**时也会编译这些模块。  
-把 `ZEPHYR_EXTRA_MODULES` 设在 **`framework/zephyr_config.env`**（由模板复制，**不提交**）或系统环境里即可，**无需**改 `framework` 里任何已跟踪文件。
+升级子模块后若冲突，请保留或重新套用上述片段。
 
 ## 初始化
 
 ```bash
-git clone <你的业务仓库 URL> zephyr_gateway
-cd zephyr_gateway
 git submodule update --init --recursive
 ```
 
-按框架文档复制 `framework/zephyr_config.env.template` → `framework/zephyr_config.env` 并填写 `ZEPHYR_BASE`、SDK 等；再按 **`env.example`** 增加一行 **`ZEPHYR_EXTRA_MODULES`**，指向本仓库的 `modules/zephyr_gateway`（建议绝对路径）。
+复制 `framework/zephyr_config.env.template` → `framework/zephyr_config.env` 并填写 `ZEPHYR_BASE` 等。`ZEPHYR_EXTRA_MODULES` 可由根 `CMakeLists.txt` 在未设置时默认指向 `modules/zephyr_gateway`；也可按 **`env.example`** 写进 `zephyr_config.env`。
 
 ## 构建
 
-应用 CMake 入口始终在 **`framework/`**（与 Zephyr 独立应用约定一致，Windows 下也避免主机库误链）。
+### 在仓库根（`west build … .`）
 
-**方式一（推荐，PowerShell）**，在仓库根：
-
-```powershell
-.\scripts\build.ps1 -Board <你的板型>
-```
-
-脚本会设置 `ZEPHYR_EXTRA_MODULES` 并合并 `prj.conf` + `../gateway_prj.conf`。
-
-**方式二（手动）**，在仓库根先设置模块路径，再指定合并配置：
+根目录 **`Kconfig`** 会 `rsource "framework/Kconfig"`（路径相对应用根；勿用 `source`，否则会按 Zephyr 的 `$srctree` 解析），否则 `framework/prj.conf` 里的选项在 Kconfig 阶段全是未定义符号。根目录 **`CMakeLists.txt`** 会合并 `framework/prj.conf` + `gateway_prj.conf`，附加 `framework/app.overlay`（若存在），并 `add_subdirectory(framework)`：
 
 ```powershell
-$env:ZEPHYR_EXTRA_MODULES = "$PWD\modules\zephyr_gateway"
-west build -b <你的板型> framework -- "-DCONF_FILE=prj.conf;../gateway_prj.conf"
+west build -b nucleo_l4r5zi -d build . -p always
 ```
 
-（在 `framework` 为应用源码目录时，`../gateway_prj.conf` 即仓库根的 `gateway_prj.conf`。）
+### 仅子模块、无外部仓库（`west build … framework`）
 
-## 业务入口说明
+与上游用法相同，**不需要**设置 `ZEPHYR_GATEWAY_TOPLEVEL_BOOTSTRAP`：
 
-不要在 `src/` 再实现第二个 `main()`；框架已提供应用入口。示例使用 `SYS_INIT`（见 `src/gateway/gateway_init.c`）；关闭业务编译可将 `gateway_prj.conf` 中的 `CONFIG_ZEPHYR_GATEWAY_BUSINESS` 设为 `n` 或删除该项。
+```powershell
+west build -b nucleo_l4r5zi -d build framework -p always
+```
 
-## 若坚持「根目录 west build .」
+若需业务模块与 `gateway_prj.conf`，仍要设置 `ZEPHYR_EXTRA_MODULES` 并传 `CONF_FILE`（见 `env.example` / `scripts/build.ps1 -SourceDir framework`）。
 
-需要顶层 `CMakeLists.txt` 聚合子目录，且历史上在 Windows 上易踩交叉编译与路径问题；当前仓库**刻意不提供**根目录应用 CMake，以保持 **`framework` 零修改**与构建行为简单可预期。
+### 脚本
+
+```powershell
+.\scripts\build.ps1 -Board nucleo_l4r5zi
+```
+
+默认 `-SourceDir .`。仅编框架时：`.\scripts\build.ps1 -Board nucleo_l4r5zi -SourceDir framework`。
+
+## 业务入口
+
+不要在 `src/` 再实现第二个 `main()`；示例使用 `SYS_INIT`（`src/gateway/gateway_init.c`）。

@@ -1,0 +1,4 @@
+# 当 west/cmake 以仓库根为应用目录 (-S .) 时，Zephyr 只加载本文件；须再引入 framework 的 Kconfig，
+# 否则 framework/prj.conf 中的 CONFIG_* 在 Kconfig 阶段均为「未定义符号」。
+# 使用 rsource：路径相对于本文件所在目录；勿用 source，否则会按 $srctree（Zephyr 树）解析而找不到。
+rsource "framework/Kconfig"

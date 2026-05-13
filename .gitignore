@@ -7,6 +7,9 @@ zephyr_config.env
 id_rsa
 id_ed25519
 
+# 本地目录联接 app/ -> framework/（见 scripts/link-app-junction.ps1；勿提交）
+app/
+
 # Zephyr build directory
 build/
 build_tests_hw/
