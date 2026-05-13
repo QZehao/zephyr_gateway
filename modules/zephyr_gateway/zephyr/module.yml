@@ -1,0 +1,6 @@
+# Zephyr 树外模块：业务在仓库根 src/，framework 子模块保持上游不变。
+# 将本目录加入 ZEPHYR_EXTRA_MODULES（见仓库 README / env.example）。
+name: zephyr_gateway
+build:
+  cmake: .
+  kconfig: Kconfig

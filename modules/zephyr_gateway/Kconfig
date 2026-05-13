@@ -1,0 +1,11 @@
+# 树外模块 Kconfig（由 Zephyr 在 ZEPHYR_EXTRA_MODULES 中自动加载）
+
+menu "Zephyr gateway (product)"
+
+config ZEPHYR_GATEWAY_BUSINESS
+	bool "Enable gateway business sources under repo src/"
+	default y
+	help
+	  Compiles ../src/gateway into the application. Disable to drop product code.
+
+endmenu
