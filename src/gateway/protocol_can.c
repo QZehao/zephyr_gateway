@@ -122,11 +122,11 @@ int protocol_can_start(void)
     }
 
     /* 添加 RX 过滤器 */
-    g_can.filter.flags = CAN_FILTER_DATA | CAN_FILTER_IDE;
+    g_can.filter.flags = CAN_FILTER_IDE;
     g_can.filter.id = CONFIG_GATEWAY_CAN_FILTER_ID;
     g_can.filter.mask = CONFIG_GATEWAY_CAN_FILTER_MASK;
 
-    g_can.filter_id = can_add_rx_filter_msgq(g_can.dev, NULL, &g_can.filter, NULL);
+    g_can.filter_id = can_add_rx_filter_msgq(g_can.dev, NULL, &g_can.filter);
     if (g_can.filter_id < 0) {
         LOG_ERR("添加 CAN RX 过滤器失败: %d", g_can.filter_id);
         g_can.filter_id = -1;
@@ -315,7 +315,7 @@ static void can_rx_thread(void* p1, void* p2, void* p3)
     if (g_can.dev != NULL && g_can.filter_id >= 0) {
         can_remove_rx_filter(g_can.dev, g_can.filter_id);
     }
-    g_can.filter_id = can_add_rx_filter_msgq(g_can.dev, &can_msgq, &g_can.filter, NULL);
+    g_can.filter_id = can_add_rx_filter_msgq(g_can.dev, &can_msgq, &g_can.filter);
 
     while (g_can.status == MODULE_STATUS_RUNNING) {
         if (k_msgq_get(&can_msgq, &frame, K_MSEC(100)) == 0) {

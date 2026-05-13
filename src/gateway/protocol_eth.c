@@ -348,7 +348,7 @@ static int eth_mqtt_connect(void)
 static void eth_mqtt_disconnect(void)
 {
     if (g_eth.state != ETH_STATE_DISCONNECTED) {
-        mqtt_disconnect(&g_eth.client);
+        mqtt_disconnect(&g_eth.client, NULL);
         g_eth.state = ETH_STATE_DISCONNECTED;
         g_eth.disconnect_count++;
         eth_publish_state_event(false);
@@ -389,7 +389,11 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
             },
             .qos = MQTT_QOS_0_AT_MOST_ONCE,
         };
-        mqtt_subscribe(client, &topic);
+        struct mqtt_subscription_list sub_list = {
+            .list = &topic,
+            .list_count = 1,
+        };
+        mqtt_subscribe(client, &sub_list);
         g_eth.state = ETH_STATE_SUBSCRIBED;
         eth_publish_state_event(true);
         break;

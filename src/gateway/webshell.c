@@ -21,6 +21,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "event_system.h"
@@ -109,8 +110,8 @@ static int cmd_modbus_read(const struct shell* sh, size_t argc, char** argv)
         return -1;
     }
 
-    uint16_t addr = (uint16_t)shell_strtoul(argv[1], NULL, 0);
-    uint16_t count = (uint16_t)shell_strtoul(argv[2], NULL, 0);
+    uint16_t addr = (uint16_t)shell_strtoul(argv[1], 0, NULL);
+    uint16_t count = (uint16_t)shell_strtoul(argv[2], 0, NULL);
 
     if (count == 0 || count > 16) {
         shell_print(sh, "count 范围: 1-16");
@@ -141,10 +142,10 @@ static int cmd_anomaly_config(const struct shell* sh, size_t argc, char** argv)
         return -1;
     }
 
-    uint8_t sensor_type = (uint8_t)shell_strtoul(argv[1], NULL, 0);
-    float w = (float)shell_strtod(argv[2], NULL);
-    float c = (float)shell_strtod(argv[3], NULL);
-    float e = (argc > 4) ? (float)shell_strtod(argv[4], NULL) : c * 1.5f;
+    uint8_t sensor_type = (uint8_t)shell_strtoul(argv[1], 0, NULL);
+    float w = strtof(argv[2], NULL);
+    float c = strtof(argv[3], NULL);
+    float e = (argc > 4) ? strtof(argv[4], NULL) : c * 1.5f;
 
     int ret = anomaly_detection_set_threshold(sensor_type, w, c, e);
     if (ret == 0) {
