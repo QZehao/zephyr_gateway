@@ -65,7 +65,6 @@ static protocol_can_cb_t g_can;
  * ============================================================================= */
 
 static void can_rx_thread(void* p1, void* p2, void* p3);
-static void can_rx_callback(const struct device* dev, struct can_frame* frame, void* user_data);
 static void can_state_callback(const struct device* dev, enum can_state state,
                                 struct can_bus_err_cnt err_cnt, void* user_data);
 
@@ -247,27 +246,6 @@ void protocol_can_get_stats(uint32_t* rx_count, uint32_t* tx_count, uint32_t* er
 /* =============================================================================
  * 内部函数
  * ============================================================================= */
-
-static void can_rx_callback(const struct device* dev, struct can_frame* frame, void* user_data)
-{
-    ARG_UNUSED(dev);
-    ARG_UNUSED(user_data);
-
-    k_spinlock_key_t key = k_spin_lock(&g_can.ring_lock);
-
-    uint32_t next_head = (g_can.rx_head + 1) % CAN_RX_RING_SIZE;
-    if (next_head != g_can.rx_tail) {
-        g_can.rx_ring[g_can.rx_head] = *frame;
-        g_can.rx_head = next_head;
-    } else {
-        /* 环形缓冲区满，丢弃最旧数据 */
-        g_can.rx_tail = (g_can.rx_tail + 1) % CAN_RX_RING_SIZE;
-        g_can.rx_ring[g_can.rx_head] = *frame;
-        g_can.rx_head = next_head;
-    }
-
-    k_spin_unlock(&g_can.ring_lock, key);
-}
 
 static void can_state_callback(const struct device* dev, enum can_state state,
                                 struct can_bus_err_cnt err_cnt, void* user_data)

@@ -41,11 +41,13 @@ static const gateway_subscription_t g_subscriptions[] = {
 	/* anomaly_detection 订阅 sensor 数据 */
 	{"anomaly_detection", EVENT_TYPE_SENSOR_DATA},
 
-	/* cloud_upload 订阅 sensor 和 anomaly 数据 */
+	/* cloud_upload 订阅 sensor、anomaly 和网络状态 */
 	{"cloud_upload", EVENT_TYPE_SENSOR_DATA},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_WARNING},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_CRITICAL},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_EMERGENCY},
+	{"cloud_upload", EVENT_TYPE_CLOUD_CONNECTED},
+	{"cloud_upload", EVENT_TYPE_CLOUD_DISCONNECTED},
 
 	/* offline_cache 订阅 cloud_upload 事件和网络状态 */
 	{"offline_cache", EVENT_TYPE_CLOUD_UPLOAD},

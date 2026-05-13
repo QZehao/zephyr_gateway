@@ -44,6 +44,8 @@ typedef struct
     /* 定时器 */
     uint32_t last_upload_ms;
     uint32_t upload_interval_ms;
+    /* 网络状态（通过事件更新，替代 protocol_eth_is_connected 直接调用） */
+    bool net_connected;
     /* 缓存 */
     gateway_sensor_data_t last_sensor;
     bool has_pending_sensor;
@@ -138,6 +140,16 @@ void cloud_upload_on_event(const event_t *event, void *user_data)
         {
             cloud_on_anomaly((const gateway_anomaly_event_t *)gateway_event_data(event));
         }
+        break;
+
+    case EVENT_TYPE_CLOUD_CONNECTED:
+        g_cloud.net_connected = true;
+        LOG_INF("网络已连接");
+        break;
+
+    case EVENT_TYPE_CLOUD_DISCONNECTED:
+        g_cloud.net_connected = false;
+        LOG_INF("网络已断开");
         break;
     }
 }
@@ -247,7 +259,7 @@ static void cloud_on_anomaly(const gateway_anomaly_event_t *evt)
 
 static int cloud_send_json(const char *topic, const char *json)
 {
-    if (!protocol_eth_is_connected())
+    if (!g_cloud.net_connected)
     {
         return -1;
     }
