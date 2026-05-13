@@ -8,4 +8,166 @@ config ZEPHYR_GATEWAY_BUSINESS
 	help
 	  Compiles ../src/gateway into the application. Disable to drop product code.
 
+config GATEWAY_CAN_ENABLE
+	bool "Enable CAN bus data acquisition module"
+	depends on ZEPHYR_GATEWAY_BUSINESS
+	depends on CAN
+	default y
+	help
+	  Enable CAN bus protocol module for industrial sensor data acquisition.
+
+config GATEWAY_CAN_DEVICE
+	string "CAN device name"
+	depends on GATEWAY_CAN_ENABLE
+	default "can0"
+
+config GATEWAY_CAN_FILTER_ID
+	hex "CAN filter ID"
+	depends on GATEWAY_CAN_ENABLE
+	default 0x100
+
+config GATEWAY_CAN_FILTER_MASK
+	hex "CAN filter mask"
+	depends on GATEWAY_CAN_ENABLE
+	default 0x7F0
+
+config GATEWAY_MODBUS_ENABLE
+	bool "Enable Modbus RTU master module"
+	depends on ZEPHYR_GATEWAY_BUSINESS
+	depends on SERIAL
+	default y
+	help
+	  Enable Modbus RTU master module via UART/RS-485.
+
+config GATEWAY_MODBUS_DEVICE
+	string "UART device for Modbus"
+	depends on GATEWAY_MODBUS_ENABLE
+	default "uart1"
+
+config GATEWAY_MODBUS_BAUDRATE
+	int "Modbus baudrate"
+	depends on GATEWAY_MODBUS_ENABLE
+	default 9600
+
+config GATEWAY_MODBUS_SLAVE_ID
+	int "Modbus default slave ID"
+	depends on GATEWAY_MODBUS_ENABLE
+	default 1
+	range 1 247
+
+config GATEWAY_MODBUS_POLL_INTERVAL_MS
+	int "Modbus poll interval (ms)"
+	depends on GATEWAY_MODBUS_ENABLE
+	default 1000
+	range 100 10000
+
+config GATEWAY_MQTT_ENABLE
+	bool "Enable Ethernet/MQTT connection module"
+	depends on ZEPHYR_GATEWAY_BUSINESS
+	depends on NETWORKING
+	depends on MQTT_LIB
+	default y
+	help
+	  Enable MQTT client for cloud data upload.
+
+config GATEWAY_MQTT_BROKER_ADDR
+	string "MQTT broker address"
+	depends on GATEWAY_MQTT_ENABLE
+	default "broker.emqx.io"
+
+config GATEWAY_MQTT_BROKER_PORT
+	int "MQTT broker port"
+	depends on GATEWAY_MQTT_ENABLE
+	default 1883
+
+config GATEWAY_MQTT_CLIENT_ID
+	string "MQTT client ID"
+	depends on GATEWAY_MQTT_ENABLE
+	default "zephyr_gateway"
+
+config GATEWAY_MQTT_TOPIC_TELEMETRY
+	string "MQTT topic for telemetry"
+	depends on GATEWAY_MQTT_ENABLE
+	default "gateway/telemetry"
+
+config GATEWAY_MQTT_TOPIC_ANOMALY
+	string "MQTT topic for anomaly"
+	depends on GATEWAY_MQTT_ENABLE
+	default "gateway/anomaly"
+
+config GATEWAY_ANOMALY_ENABLE
+	bool "Enable adaptive threshold anomaly detection"
+	depends on ZEPHYR_GATEWAY_BUSINESS
+	default y
+	help
+	  Enable sliding-window statistical anomaly detection
+	  (mean + standard deviation, Warning/Critical/Emergency levels).
+
+config GATEWAY_ANOMALY_WINDOW_SIZE
+	int "Anomaly detection sliding window size"
+	depends on GATEWAY_ANOMALY_ENABLE
+	default 100
+	range 10 1000
+
+config GATEWAY_ANOMALY_WARNING_SIGMA
+	int "Warning threshold (sigma * 10, fixed point)"
+	depends on GATEWAY_ANOMALY_ENABLE
+	default 20
+	help
+	  Warning triggered when deviation > N/10 sigma.
+	  Default 20 means 2.0 sigma.
+
+config GATEWAY_ANOMALY_CRITICAL_SIGMA
+	int "Critical threshold (sigma * 10, fixed point)"
+	depends on GATEWAY_ANOMALY_ENABLE
+	default 30
+
+config GATEWAY_ANOMALY_EMERGENCY_SIGMA
+	int "Emergency threshold (sigma * 10, fixed point)"
+	depends on GATEWAY_ANOMALY_ENABLE
+	default 40
+
+config GATEWAY_CLOUD_UPLOAD_ENABLE
+	bool "Enable cloud data upload module"
+	depends on ZEPHYR_GATEWAY_BUSINESS
+	depends on GATEWAY_MQTT_ENABLE
+	default y
+	help
+	  Subscribe to sensor/anomaly events and upload via MQTT.
+
+config GATEWAY_CLOUD_UPLOAD_INTERVAL_MS
+	int "Normal upload interval (ms)"
+	depends on GATEWAY_CLOUD_UPLOAD_ENABLE
+	default 5000
+	range 1000 60000
+
+config GATEWAY_OFFLINE_CACHE_ENABLE
+	bool "Enable offline cache for network interruption"
+	depends on ZEPHYR_GATEWAY_BUSINESS
+	depends on FLASH
+	depends on NVS
+	default y
+	help
+	  Cache data to NVS when network is down, bulk upload on recovery.
+
+config GATEWAY_OFFLINE_CACHE_MAX_ENTRIES
+	int "Maximum offline cache entries"
+	depends on GATEWAY_OFFLINE_CACHE_ENABLE
+	default 256
+	range 16 1024
+
+config GATEWAY_OFFLINE_CACHE_ENTRY_SIZE
+	int "Size of each cache entry (bytes)"
+	depends on GATEWAY_OFFLINE_CACHE_ENABLE
+	default 256
+	range 64 512
+
+config GATEWAY_WEBSHELL_ENABLE
+	bool "Enable gateway shell commands"
+	depends on ZEPHYR_GATEWAY_BUSINESS
+	depends on SHELL
+	default y
+	help
+	  Add gateway-specific shell commands (status, can stats, modbus read, etc.)
+
 endmenu

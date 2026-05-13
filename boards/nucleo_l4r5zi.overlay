@@ -1,0 +1,17 @@
+/**
+ * Nucleo L4R5ZI 补充 overlay（不覆盖 framework 中的文件）
+ * 添加 CAN 节点和 UART alias 用于验证
+ */
+
+/* 为 Nucleo L4R5ZI 补充 CAN 和 UART alias */
+/ {
+	aliases {
+		/* 使用板载 LPUART1 作为 RS-485 UART（验证用） */
+		rs485-uart = &lpuart1;
+	};
+};
+
+&lpuart1 {
+	status = "okay";
+	current-speed = <9600>;
+};

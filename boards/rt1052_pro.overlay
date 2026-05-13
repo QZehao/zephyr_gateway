@@ -1,0 +1,46 @@
+/**
+ * 野火 RT1052 Pro 设备树 overlay
+ * CAN + UART/RS-485 + ENET + SDRAM
+ */
+
+/* CAN1 (FlexCAN1) */
+&flexcan1 {
+	status = "okay";
+	bus-speed = <125000>;
+	bus-speed-data = <1000000>;
+	phys = <&can_phy0>;
+};
+
+/* CAN2 (FlexCAN2) */
+&flexcan2 {
+	status = "okay";
+	bus-speed = <125000>;
+	bus-speed-data = <1000000>;
+	phys = <&can_phy1>;
+};
+
+/* 串口用于 RS-485 */
+&lpuart1 {
+	status = "okay";
+	current-speed = <9600>;
+};
+
+/* ENET 以太网 */
+&enet {
+	status = "okay";
+	phy-handle = <&phy>;
+};
+
+/* SDRAM */
+&sdram {
+	status = "okay";
+};
+
+/* aliases */
+/ {
+	aliases {
+		can0 = &flexcan1;
+		can1 = &flexcan2;
+		rs485-uart = &lpuart1;
+	};
+};
