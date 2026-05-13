@@ -74,7 +74,8 @@ static int gateway_init(void)
 			GATEWAY_VERSION_MINOR, GATEWAY_VERSION_PATCH);
 	LOG_INF("========================================");
 
-	/* 注册网关事件类型不需要了，已经由各个模块初始化时注册了 */
+	/* 注册网关事件类型（未被各模块 init 自动注册的部分） */
+	event_register_type(EVENT_TYPE_SENSOR_DATA, "sensor_data");
 
 	/* 设置模块间事件订阅 */
 	int ret = gateway_setup_subscriptions();
