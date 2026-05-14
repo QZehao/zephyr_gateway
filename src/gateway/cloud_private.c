@@ -17,6 +17,8 @@
 #include <zephyr/shell/shell.h>
 #include <string.h>
 
+#include "module_manager.h"
+
 LOG_MODULE_REGISTER(cloud_private, CONFIG_SYS_LOG_LEVEL);
 
 /* =============================================================================

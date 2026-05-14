@@ -33,6 +33,12 @@ bool protocol_eth_is_connected(void);
 /** 发布 MQTT 消息（云上传模块调用） */
 int protocol_eth_mqtt_publish(const char* topic, const char* payload, uint16_t payload_len);
 
+/** 设置 MQTT 认证参数（在连接前调用，触发重连） */
+int protocol_eth_mqtt_set_auth(const char* username, const char* password);
+
+/** 设置 MQTT Broker 地址和端口（触发重连） */
+int protocol_eth_mqtt_set_broker(const char* addr, uint16_t port);
+
 /** 获取连接统计 */
 void protocol_eth_get_stats(uint32_t* connect_count, uint32_t* disconnect_count, uint32_t* msg_count);
 

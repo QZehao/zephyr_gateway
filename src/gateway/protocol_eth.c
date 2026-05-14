@@ -67,6 +67,12 @@ typedef struct {
     uint32_t             disconnect_count;
     uint32_t             msg_tx_count;
     uint32_t             msg_rx_count;
+    /* 认证（由 cloud provider 设置） */
+    char                 mqtt_username[64];
+    char                 mqtt_password[128];
+    bool                 has_auth;
+    struct mqtt_utf8     mqtt_user_name;
+    struct mqtt_utf8     mqtt_password_utf8;
     /* 同步 */
     struct k_mutex       client_mutex;
 } protocol_eth_cb_t;
@@ -237,6 +243,44 @@ void protocol_eth_get_stats(uint32_t* connect_count, uint32_t* disconnect_count,
     if (msg_count != NULL) *msg_count = g_eth.msg_tx_count;
 }
 
+int protocol_eth_mqtt_set_auth(const char* username, const char* password)
+{
+    k_mutex_lock(&g_eth.client_mutex, K_FOREVER);
+
+    if (username != NULL && password != NULL) {
+        strncpy(g_eth.mqtt_username, username, sizeof(g_eth.mqtt_username) - 1);
+        g_eth.mqtt_username[sizeof(g_eth.mqtt_username) - 1] = '\0';
+        strncpy(g_eth.mqtt_password, password, sizeof(g_eth.mqtt_password) - 1);
+        g_eth.mqtt_password[sizeof(g_eth.mqtt_password) - 1] = '\0';
+        g_eth.has_auth = true;
+        LOG_INF("MQTT 认证参数已设置: user=%s", g_eth.mqtt_username);
+    } else {
+        g_eth.has_auth = false;
+        g_eth.mqtt_username[0] = '\0';
+        g_eth.mqtt_password[0] = '\0';
+        LOG_INF("MQTT 认证参数已清除");
+    }
+
+    k_mutex_unlock(&g_eth.client_mutex);
+    return 0;
+}
+
+int protocol_eth_mqtt_set_broker(const char* addr, uint16_t port)
+{
+    if (addr == NULL) {
+        return -EINVAL;
+    }
+
+    /* TODO: 当前 broker 地址通过 Kconfig 编译时固定，
+     * 运行时修改需要重新解析地址并重连。
+     * 简单实现：断开当前连接，让工作线程自动重连到新地址。
+     * 实际修改 CONFIG 值需通过其他机制（如全局变量）。
+     */
+    LOG_INF("MQTT Broker 设置请求: %s:%u（需重连生效）", addr, port);
+    eth_mqtt_disconnect();
+    return 0;
+}
+
 /* =============================================================================
  * 内部函数
  * ============================================================================= */
@@ -339,6 +383,16 @@ static int eth_mqtt_connect(void)
 
     /* 设置 keepalive */
     g_eth.client.keepalive = GATEWAY_MQTT_KEEPALIVE_S;
+
+    /* 设置认证（如有） */
+    if (g_eth.has_auth) {
+        g_eth.mqtt_user_name.utf8 = (uint8_t*)g_eth.mqtt_username;
+        g_eth.mqtt_user_name.size = strlen(g_eth.mqtt_username);
+        g_eth.mqtt_password_utf8.utf8 = (uint8_t*)g_eth.mqtt_password;
+        g_eth.mqtt_password_utf8.size = strlen(g_eth.mqtt_password);
+        g_eth.client.user_name = &g_eth.mqtt_user_name;
+        g_eth.client.password = &g_eth.mqtt_password_utf8;
+    }
 
     ret = mqtt_connect(&g_eth.client);
     if (ret != 0) {

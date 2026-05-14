@@ -161,6 +161,61 @@ config GATEWAY_CLOUD_PROVIDER_AWS
 	help
 	  Connect to AWS IoT Core (requires TLS support).
 
+# ---------- 阿里云 IoT 配置 ----------
+if GATEWAY_CLOUD_PROVIDER_ALIYUN
+
+config GATEWAY_ALIYUN_PRODUCT_KEY
+	string "阿里云 ProductKey"
+	default "a1Xxxxxx"
+
+config GATEWAY_ALIYUN_DEVICE_NAME
+	string "阿里云 DeviceName"
+	default "device_01"
+
+config GATEWAY_ALIYUN_DEVICE_SECRET
+	string "阿里云 DeviceSecret"
+	default ""
+
+config GATEWAY_ALIYUN_REGION
+	string "阿里云 Region"
+	default "cn-shanghai"
+
+endif # GATEWAY_CLOUD_PROVIDER_ALIYUN
+
+# ---------- 腾讯云 IoT Hub 配置 ----------
+if GATEWAY_CLOUD_PROVIDER_TENCENT
+
+config GATEWAY_TENCENT_PRODUCT_ID
+	string "腾讯云 ProductID"
+	default "ProductID"
+
+config GATEWAY_TENCENT_DEVICE_NAME
+	string "腾讯云 DeviceName"
+	default "device_01"
+
+config GATEWAY_TENCENT_DEVICE_SECRET
+	string "腾讯云 DeviceSecret"
+	default ""
+
+endif # GATEWAY_CLOUD_PROVIDER_TENCENT
+
+# ---------- AWS IoT Core 配置 ----------
+if GATEWAY_CLOUD_PROVIDER_AWS
+
+config GATEWAY_AWS_ENDPOINT
+	string "AWS IoT Endpoint"
+	default "xxxxxx-ats.iot.us-east-1.amazonaws.com"
+
+config GATEWAY_AWS_THING_NAME
+	string "AWS Thing Name"
+	default "my_thing"
+
+config GATEWAY_AWS_REGION
+	string "AWS Region"
+	default "us-east-1"
+
+endif # GATEWAY_CLOUD_PROVIDER_AWS
+
 endif # GATEWAY_CLOUD_UPLOAD_ENABLE
 
 config GATEWAY_CLOUD_UPLOAD_INTERVAL_MS
