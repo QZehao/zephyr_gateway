@@ -11,6 +11,7 @@
 #include "gateway_config.h"
 #include "app_config.h"
 
+#include <zephyr/drivers/flash.h>
 #include <zephyr/fs/nvs.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
@@ -60,6 +61,8 @@ typedef struct {
     uint32_t        overflow_count;
     /* 同步 */
     struct k_mutex  lock;
+    /* 内存回退缓冲区（NVS 不可用时使用） */
+    uint8_t         mem_buf[CACHE_MAX_ENTRIES][CACHE_ENTRY_SIZE];
 } offline_cache_cb_t;
 
 /* =============================================================================
@@ -276,7 +279,13 @@ static void cache_on_net_state(bool connected)
 static int cache_write_entry(const char* json_data)
 {
     if (g_cache.fs.flash_device == NULL) {
-        /* 内存模式：简化实现，仅维护计数 */
+        /* 内存模式：保存到内存环形缓冲区 */
+        uint16_t idx = g_cache.head;
+        cache_entry_t* entry = (cache_entry_t*)&g_cache.mem_buf[idx];
+        entry->timestamp = k_uptime_get_32();
+        strncpy(entry->data, json_data, sizeof(entry->data) - 1);
+        entry->data[sizeof(entry->data) - 1] = '\0';
+
         if (g_cache.count >= CACHE_MAX_ENTRIES) {
             g_cache.tail = (g_cache.tail + 1) % CACHE_MAX_ENTRIES;
         } else {
@@ -295,6 +304,10 @@ static int cache_write_entry(const char* json_data)
     int ret = nvs_write(&g_cache.fs, nvs_id, &entry, sizeof(entry));
     if (ret < 0) {
         return ret;
+    }
+    if ((size_t)ret < sizeof(entry)) {
+        /* NVS 空间不足，部分写入视为失败 */
+        return -ENOSPC;
     }
 
     if (g_cache.count >= CACHE_MAX_ENTRIES) {
@@ -327,7 +340,10 @@ static int cache_read_entry(char* out_data, size_t out_size)
         strncpy(out_data, entry.data, out_size - 1);
         out_data[out_size - 1] = '\0';
     } else {
-        out_data[0] = '\0';
+        /* 内存模式：从内存缓冲区读取 */
+        cache_entry_t* entry = (cache_entry_t*)&g_cache.mem_buf[g_cache.tail];
+        strncpy(out_data, entry->data, out_size - 1);
+        out_data[out_size - 1] = '\0';
     }
 
     g_cache.tail = (g_cache.tail + 1) % CACHE_MAX_ENTRIES;
@@ -346,8 +362,23 @@ static int cache_nvs_init(void)
 
     g_cache.fs.flash_device = fa->fa_dev;
     g_cache.fs.offset = fa->fa_off;
-    g_cache.fs.sector_size = fa->fa_size / 4;  /* 假设 4 个 sector */
-    g_cache.fs.sector_count = 4;
+
+    /* 查询 flash 实际 sector (page) 大小 */
+    struct flash_pages_info page_info;
+    ret = flash_get_page_info_by_offs(fa->fa_dev, fa->fa_off, &page_info);
+    if (ret != 0) {
+        flash_area_close(fa);
+        return ret;
+    }
+    g_cache.fs.sector_size = page_info.size;
+    g_cache.fs.sector_count = fa->fa_size / page_info.size;
+
+    if (g_cache.fs.sector_count == 0 || (fa->fa_size % page_info.size) != 0) {
+        LOG_ERR("storage_partition 大小 (%u) 不是 sector_size (%u) 的整数倍",
+                (unsigned)fa->fa_size, (unsigned)page_info.size);
+        flash_area_close(fa);
+        return -EINVAL;
+    }
 
     ret = nvs_mount(&g_cache.fs);
     if (ret != 0) {
@@ -356,6 +387,7 @@ static int cache_nvs_init(void)
         return ret;
     }
 
+    flash_area_close(fa);
     return 0;
 }
 
@@ -363,8 +395,15 @@ static void cache_save_state(void)
 {
     if (g_cache.fs.flash_device == NULL) return;
 
-    nvs_write(&g_cache.fs, CACHE_HEAD_ID, &g_cache.head, sizeof(g_cache.head));
-    nvs_write(&g_cache.fs, CACHE_TAIL_ID, &g_cache.tail, sizeof(g_cache.tail));
+    int ret;
+    ret = nvs_write(&g_cache.fs, CACHE_HEAD_ID, &g_cache.head, sizeof(g_cache.head));
+    if (ret < 0) {
+        LOG_WRN("保存 head 状态失败: %d", ret);
+    }
+    ret = nvs_write(&g_cache.fs, CACHE_TAIL_ID, &g_cache.tail, sizeof(g_cache.tail));
+    if (ret < 0) {
+        LOG_WRN("保存 tail 状态失败: %d", ret);
+    }
 }
 
 static void cache_load_state(void)
@@ -372,11 +411,18 @@ static void cache_load_state(void)
     if (g_cache.fs.flash_device == NULL) return;
 
     size_t len = sizeof(g_cache.head);
-    if (nvs_read(&g_cache.fs, CACHE_HEAD_ID, &g_cache.head, len) < 0) {
-        g_cache.head = 0;
+    uint16_t loaded_head = 0;
+    uint16_t loaded_tail = 0;
+
+    if (nvs_read(&g_cache.fs, CACHE_HEAD_ID, &loaded_head, len) >= 0) {
+        if (loaded_head < CACHE_MAX_ENTRIES) {
+            g_cache.head = loaded_head;
+        }
     }
-    if (nvs_read(&g_cache.fs, CACHE_TAIL_ID, &g_cache.tail, len) < 0) {
-        g_cache.tail = 0;
+    if (nvs_read(&g_cache.fs, CACHE_TAIL_ID, &loaded_tail, len) >= 0) {
+        if (loaded_tail < CACHE_MAX_ENTRIES) {
+            g_cache.tail = loaded_tail;
+        }
     }
 
     /* 恢复 count */

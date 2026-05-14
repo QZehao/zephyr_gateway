@@ -161,7 +161,6 @@ module_status_t cloud_upload_get_status(void)
 
 int cloud_upload_control(int cmd, void *arg)
 {
-    ARG_UNUSED(arg);
     switch (cmd)
     {
     case CLOUD_CMD_GET_STATS:
@@ -282,7 +281,7 @@ static void cloud_handle_offline(const char *topic, const char *json)
 {
     gateway_cloud_data_t cache_data = {
         .timestamp = k_uptime_get_32(),
-        .data_type = (strncmp(topic, CLOUD_TOPIC_ANOMALY, strlen(CLOUD_TOPIC_ANOMALY)) == 0) ? 1 : 0,
+        .data_type = (strcmp(topic, CLOUD_TOPIC_ANOMALY) == 0) ? 1 : 0,
     };
 
     strncpy(cache_data.json_payload, json, sizeof(cache_data.json_payload) - 1);

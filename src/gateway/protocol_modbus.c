@@ -34,6 +34,9 @@ LOG_MODULE_REGISTER(protocol_modbus, CONFIG_SYS_LOG_LEVEL);
 #define MODBUS_RX_BUF_SIZE       256
 #define MODBUS_TX_BUF_SIZE       32
 
+/* 按字节计算的发送时间：10bit（1起始+8数据+1停止）/ 波特率，微秒 */
+#define MODBUS_BYTE_TIME_US(baud)  ((10U * 1000000U + (baud) / 2) / (baud))
+
 /* =============================================================================
  * 内部数据结构
  * ============================================================================= */
@@ -171,7 +174,7 @@ int protocol_modbus_stop(void)
     }
 
     g_modbus.status = MODULE_STATUS_STOPPED;
-    k_msleep(150);
+    k_thread_join(&g_modbus.worker_thread, K_MSEC(500));
 
     LOG_INF("Modbus 模块已停止");
     return 0;
@@ -200,9 +203,10 @@ int protocol_modbus_control(int cmd, void* arg)
     switch (cmd) {
     case MODBUS_CMD_READ_REGS: {
         if (arg == NULL) return -1;
-        uint16_t* params = (uint16_t*)arg;
-        return protocol_modbus_read_holding_regs((uint8_t)params[0], params[1],
-                                                   params[2], NULL);
+        modbus_read_regs_arg_t* rra = (modbus_read_regs_arg_t*)arg;
+        if (rra->reg_count == 0 || rra->reg_count > 16) return -1;
+        return protocol_modbus_read_holding_regs(rra->slave_id, rra->start_addr,
+                                                   rra->reg_count, rra->out_values);
     }
     case MODBUS_CMD_GET_STATS:
         if (arg != NULL) {
@@ -319,13 +323,8 @@ static void modbus_uart_irq_cb(const struct device* dev, void* user_data)
             }
         }
     }
-
-    while (uart_irq_tx_complete(dev)) {
-        /* 发送完成后切接收 */
-        if (cb->has_de_gpio && cb->de_gpio != NULL) {
-            gpio_pin_set_dt(cb->de_gpio, 0);
-        }
-    }
+    /* 注意：TX complete 回调未启用（uart_irq_tx_enable 未调用），
+     * RS-485 DE 方向切换在 modbus_send_frame() 中通过延时完成。 */
 }
 
 static void modbus_send_frame(const uint8_t* data, size_t len)
@@ -334,15 +333,16 @@ static void modbus_send_frame(const uint8_t* data, size_t len)
 
     if (g_modbus.has_de_gpio && g_modbus.de_gpio != NULL) {
         gpio_pin_set_dt(g_modbus.de_gpio, 1);
-        k_usleep(5); /* DE 建立时间 */
+        k_usleep(10); /* DE 建立时间，典型 2-10us */
     }
 
     for (size_t i = 0; i < len; i++) {
         uart_poll_out(g_modbus.dev, data[i]);
     }
 
-    /* 等待发送完成再切接收 */
-    k_usleep(100); /* 一帧发送时间 @ 9600bps */
+    /* 等待物理发送完成：按字节数计算帧时间 + 2ms 安全余量 */
+    uint32_t frame_time_us = (uint32_t)len * MODBUS_BYTE_TIME_US(GATEWAY_MODBUS_BAUDRATE_DEFAULT) + 2000U;
+    k_usleep(frame_time_us);
 
     if (g_modbus.has_de_gpio && g_modbus.de_gpio != NULL) {
         gpio_pin_set_dt(g_modbus.de_gpio, 0);
@@ -355,22 +355,30 @@ static int modbus_receive_response(uint8_t* buf, size_t buf_len,
                                     size_t* out_len, k_timeout_t timeout)
 {
     int64_t end_time = k_uptime_get() + k_ticks_to_ms_ceil64(timeout.ticks);
+    size_t  last_rx_len = 0;
+    int64_t last_rx_time = 0;
+    /* Modbus RTU inter-frame gap = 3.5T; 用 5ms 覆盖 9600bps 及更高速率 */
+    const int64_t inter_frame_ms = 5;
 
     while (k_uptime_get() < end_time) {
         if (g_modbus.rx_len > 0) {
-            /* 等待一帧接收完成（简单延迟法） */
-            k_msleep(50);
-
-            size_t copy_len = g_modbus.rx_len;
-            if (copy_len > buf_len) {
-                copy_len = buf_len;
+            if (g_modbus.rx_len != last_rx_len) {
+                /* 新数据还在到达，更新跟踪 */
+                last_rx_len  = g_modbus.rx_len;
+                last_rx_time = k_uptime_get();
+            } else if ((k_uptime_get() - last_rx_time) >= inter_frame_ms) {
+                /* 超过 inter-frame gap，认为帧已完整 */
+                size_t copy_len = g_modbus.rx_len;
+                if (copy_len > buf_len) {
+                    copy_len = buf_len;
+                }
+                memcpy(buf, g_modbus.rx_buf, copy_len);
+                *out_len = copy_len;
+                g_modbus.rx_len = 0;
+                return 0;
             }
-            memcpy(buf, g_modbus.rx_buf, copy_len);
-            *out_len = copy_len;
-            g_modbus.rx_len = 0;
-            return 0;
         }
-        k_msleep(10);
+        k_msleep(1);
     }
     return -ETIMEDOUT;
 }

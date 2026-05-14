@@ -134,13 +134,20 @@ static int cmd_modbus_read(const struct shell* sh, size_t argc, char** argv)
         return -1;
     }
 
-    uint16_t addr = (uint16_t)shell_strtoul(argv[1], 0, NULL);
-    uint16_t count = (uint16_t)shell_strtoul(argv[2], 0, NULL);
+    unsigned long addr_raw = shell_strtoul(argv[1], 0, NULL);
+    unsigned long count_raw = shell_strtoul(argv[2], 0, NULL);
 
-    if (count == 0 || count > 16) {
+    if (addr_raw > 0xFFFF) {
+        shell_print(sh, "addr 超出 16 位范围");
+        return -1;
+    }
+    if (count_raw == 0 || count_raw > 16) {
         shell_print(sh, "count 范围: 1-16");
         return -1;
     }
+
+    uint16_t addr = (uint16_t)addr_raw;
+    uint16_t count = (uint16_t)count_raw;
 
     uint16_t values[16];
     int ret = protocol_modbus_read_holding_regs(CONFIG_GATEWAY_MODBUS_SLAVE_ID, addr, count, values);
@@ -169,9 +176,30 @@ static int cmd_anomaly_config(const struct shell* sh, size_t argc, char** argv)
     }
 
     uint8_t sensor_type = (uint8_t)shell_strtoul(argv[1], 0, NULL);
-    float w = strtof(argv[2], NULL);
-    float c = strtof(argv[3], NULL);
-    float e = (argc > 4) ? strtof(argv[4], NULL) : c * 1.5f;
+    if (sensor_type >= 5) {
+        shell_print(sh, "sensor_type 范围: 0-4");
+        return -1;
+    }
+
+    char* endptr;
+    float w = strtof(argv[2], &endptr);
+    if (endptr == argv[2] || w <= 0.0f) {
+        shell_print(sh, "warning 阈值必须是正数");
+        return -1;
+    }
+    float c = strtof(argv[3], &endptr);
+    if (endptr == argv[3] || c <= 0.0f) {
+        shell_print(sh, "critical 阈值必须是正数");
+        return -1;
+    }
+    float e = c * 1.5f;
+    if (argc > 4) {
+        e = strtof(argv[4], &endptr);
+        if (endptr == argv[4] || e <= 0.0f) {
+            shell_print(sh, "emergency 阈值必须是正数");
+            return -1;
+        }
+    }
 
     int ret = anomaly_detection_set_threshold(sensor_type, w, c, e);
     if (ret == 0) {
@@ -233,15 +261,20 @@ static int cmd_cache_clear(const struct shell* sh, size_t argc, char** argv)
     ARG_UNUSED(argc);
     ARG_UNUSED(argv);
 
+    int ret = -1;
     uint32_t module_id = module_manager_get_id_by_name("offline_cache");
     if (module_id != 0) {
         module_info_t info;
         if (module_manager_get_module_info(module_id, &info) == 0 && info.interface != NULL && info.interface->control) {
-            info.interface->control(CACHE_CMD_CLEAR, NULL);
+            ret = info.interface->control(CACHE_CMD_CLEAR, NULL);
         }
     }
-    shell_print(sh, "离线缓存已清空");
-    return 0;
+    if (ret == 0) {
+        shell_print(sh, "离线缓存已清空");
+    } else {
+        shell_print(sh, "离线缓存清空失败: %d", ret);
+    }
+    return ret;
 }
 #endif
 

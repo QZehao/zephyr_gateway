@@ -56,7 +56,6 @@ typedef struct {
     struct sockaddr_storage broker;
     uint8_t              rx_buffer[MQTT_RX_BUF_SIZE];
     uint8_t              tx_buffer[MQTT_TX_BUF_SIZE];
-    struct zsock_pollfd  fds[1];
     /* 状态 */
     eth_state_t          state;
     bool                 net_up;
@@ -144,7 +143,9 @@ int protocol_eth_stop(void)
 
     eth_mqtt_disconnect();
     g_eth.status = MODULE_STATUS_STOPPED;
-    k_msleep(200);
+
+    /* 等待工作线程实际退出 */
+    k_thread_join(&g_eth.worker_thread, K_MSEC(500));
 
     LOG_INF("Ethernet/MQTT 模块已停止");
     return 0;
@@ -175,6 +176,7 @@ int protocol_eth_control(int cmd, void* arg)
         if (arg == NULL) return -1;
         {
             const char** params = (const char**)arg;
+            if (params[0] == NULL || params[1] == NULL) return -1;
             return protocol_eth_mqtt_publish(params[0], params[1], (uint16_t)strlen(params[1]));
         }
     case ETH_CMD_GET_STATUS:
@@ -199,11 +201,14 @@ bool protocol_eth_is_connected(void)
 
 int protocol_eth_mqtt_publish(const char* topic, const char* payload, uint16_t payload_len)
 {
-    if (!protocol_eth_is_connected()) {
+    if (!protocol_eth_is_connected() || topic == NULL || payload == NULL) {
         return -1;
     }
 
-    k_mutex_lock(&g_eth.client_mutex, K_MSEC(100));
+    int ret = k_mutex_lock(&g_eth.client_mutex, K_MSEC(100));
+    if (ret != 0) {
+        return ret;
+    }
 
     struct mqtt_publish_param param;
     param.message.topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
@@ -215,7 +220,7 @@ int protocol_eth_mqtt_publish(const char* topic, const char* payload, uint16_t p
     param.dup_flag = 0;
     param.retain_flag = 0;
 
-    int ret = mqtt_publish(&g_eth.client, &param);
+    ret = mqtt_publish(&g_eth.client, &param);
     if (ret == 0) {
         g_eth.msg_tx_count++;
     }
@@ -368,6 +373,7 @@ static void eth_publish_state_event(bool connected)
 static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* evt)
 {
     ARG_UNUSED(client);
+    int ret;
 
     switch (evt->type) {
     case MQTT_EVT_CONNACK:
@@ -393,7 +399,12 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
             .list = &topic,
             .list_count = 1,
         };
-        mqtt_subscribe(client, &sub_list);
+        ret = mqtt_subscribe(client, &sub_list);
+        if (ret != 0) {
+            LOG_WRN("MQTT 订阅失败: %d", ret);
+            eth_mqtt_disconnect();
+            break;
+        }
         g_eth.state = ETH_STATE_SUBSCRIBED;
         eth_publish_state_event(true);
         break;

@@ -26,9 +26,9 @@ extern "C" {
 #define EVENT_TYPE_MODBUS_DATA        101  /* Modbus 寄存器值 */
 
 /* 异常检测输出 */
-#define EVENT_TYPE_ANOMALY_WARNING    110  /* 2σ 偏离 */
-#define EVENT_TYPE_ANOMALY_CRITICAL   111  /* 3σ 偏离 */
-#define EVENT_TYPE_ANOMALY_EMERGENCY  112  /* 绝对上限触发 */
+#define EVENT_TYPE_ANOMALY_WARNING    110  /* |x-μ|/σ ≥ warning_sigma（默认 2.0） */
+#define EVENT_TYPE_ANOMALY_CRITICAL   111  /* |x-μ|/σ ≥ critical_sigma（默认 3.0） */
+#define EVENT_TYPE_ANOMALY_EMERGENCY  112  /* |x-μ|/σ ≥ emergency_sigma（默认 4.0）或绝对上下限 */
 
 /* 网络状态 */
 #define EVENT_TYPE_CLOUD_CONNECTED    120
@@ -75,7 +75,7 @@ typedef struct {
 typedef struct {
     uint32_t timestamp;
     uint8_t  data_type;       /* 0=传感器, 1=异常, 2=心跳 */
-    char     json_payload[192]; /* 轻量 JSON，适配 48B inline 后使用 ptr */
+    char     json_payload[192]; /* 轻量 JSON（196B > 48B inline，永远走 ptr 分配） */
 } gateway_cloud_data_t;
 
 /** CAN 帧原始数据 */

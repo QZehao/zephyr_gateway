@@ -43,11 +43,6 @@ typedef struct {
     const struct device*    dev;
     struct can_filter       filter;
     int                     filter_id;
-    /* RX ring buffer */
-    struct can_frame        rx_ring[CAN_RX_RING_SIZE];
-    uint32_t                rx_head;
-    uint32_t                rx_tail;
-    struct k_spinlock       ring_lock;
     /* stats */
     uint32_t                rx_count;
     uint32_t                tx_count;
@@ -120,25 +115,18 @@ int protocol_can_start(void)
         return -1;
     }
 
-    /* 添加 RX 过滤器 */
+    /* 配置 RX 过滤器参数（线程启动后使用） */
     g_can.filter.flags = CAN_FILTER_IDE;
     g_can.filter.id = CONFIG_GATEWAY_CAN_FILTER_ID;
     g_can.filter.mask = CONFIG_GATEWAY_CAN_FILTER_MASK;
-
-    g_can.filter_id = can_add_rx_filter_msgq(g_can.dev, NULL, &g_can.filter);
-    if (g_can.filter_id < 0) {
-        LOG_ERR("添加 CAN RX 过滤器失败: %d", g_can.filter_id);
-        g_can.filter_id = -1;
-        g_can.status = MODULE_STATUS_ERROR;
-        return -1;
-    }
+    g_can.filter_id = -1;
 
     /* 设置状态回调 */
     can_set_state_change_callback(g_can.dev, can_state_callback, NULL);
 
     g_can.status = MODULE_STATUS_RUNNING;
 
-    /* 创建接收线程 */
+    /* 创建接收线程（线程内自行添加 msgq 过滤器） */
     k_thread_create(&g_can.rx_thread, g_can.rx_stack,
                     K_THREAD_STACK_SIZEOF(g_can.rx_stack),
                     can_rx_thread, NULL, NULL, NULL,
@@ -156,20 +144,14 @@ int protocol_can_stop(void)
         return 0;
     }
 
-    /* 移除过滤器 */
-    if (g_can.filter_id >= 0 && g_can.dev != NULL) {
-        can_remove_rx_filter(g_can.dev, g_can.filter_id);
-        g_can.filter_id = -1;
-    }
-
     /* 停止 CAN */
     if (g_can.dev != NULL) {
         can_stop(g_can.dev);
     }
 
-    /* SIL-2: 信号线程退出 */
+    /* 信号线程退出 */
     g_can.status = MODULE_STATUS_STOPPED;
-    k_msleep(150);
+    k_thread_join(&g_can.rx_thread, K_MSEC(500));
 
     LOG_INF("CAN 模块已停止");
     return 0;
@@ -289,11 +271,12 @@ static void can_rx_thread(void* p1, void* p2, void* p3)
     char msgq_buffer[CAN_RX_RING_SIZE * sizeof(struct can_frame)];
     k_msgq_init(&can_msgq, msgq_buffer, sizeof(struct can_frame), CAN_RX_RING_SIZE);
 
-    /* 重新添加过滤器，使用 msgq */
-    if (g_can.dev != NULL && g_can.filter_id >= 0) {
-        can_remove_rx_filter(g_can.dev, g_can.filter_id);
-    }
+    /* 添加过滤器，绑定到本地 msgq */
     g_can.filter_id = can_add_rx_filter_msgq(g_can.dev, &can_msgq, &g_can.filter);
+    if (g_can.filter_id < 0) {
+        LOG_ERR("CAN RX 过滤器添加失败: %d", g_can.filter_id);
+        return;
+    }
 
     while (g_can.status == MODULE_STATUS_RUNNING) {
         if (k_msgq_get(&can_msgq, &frame, K_MSEC(100)) == 0) {
