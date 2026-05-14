@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "gateway_events.h"
+#include "module_base.h"
 
 #ifdef __cplusplus
 extern "C" {
