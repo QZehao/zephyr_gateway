@@ -361,8 +361,15 @@ static int cmd_sim_status(const struct shell* sh, size_t argc, char** argv)
 
 static int cmd_sim_start(const struct shell* sh, size_t argc, char** argv)
 {
-    ARG_UNUSED(argc);
-    ARG_UNUSED(argv);
+    /* 可选参数：采样周期，如 sim start 500 */
+    if (argc > 1) {
+        int err = 0;
+        unsigned long ms = shell_strtoul(argv[1], 0, &err);
+        if (err == 0 && ms > 0 && ms <= 60000) {
+            uint32_t interval = (uint32_t)ms;
+            data_simulator_control(SIM_CMD_SET_INTERVAL, &interval);
+        }
+    }
 
     uint32_t module_id = module_manager_get_id_by_name("data_simulator");
     if (module_id == 0) {
@@ -370,9 +377,26 @@ static int cmd_sim_start(const struct shell* sh, size_t argc, char** argv)
         return -1;
     }
 
+    module_info_t info;
+    if (module_manager_get_module_info(module_id, &info) == 0 &&
+        info.status == MODULE_STATUS_RUNNING) {
+        shell_print(sh, "数据模拟模块已在运行 (interval=%ums)", g_sim.sample_interval_ms);
+        return 0;
+    }
+
+    /* 可选参数：采样周期，如 sim start 500 */
+    if (argc > 1) {
+        int err = 0;
+        unsigned long ms = shell_strtoul(argv[1], 0, &err);
+        if (err == 0 && ms > 0 && ms <= 60000) {
+            uint32_t interval = (uint32_t)ms;
+            data_simulator_control(SIM_CMD_SET_INTERVAL, &interval);
+        }
+    }
+
     int ret = module_manager_start_module(module_id);
     if (ret == 0) {
-        shell_print(sh, "数据模拟模块已启动");
+        shell_print(sh, "数据模拟模块已启动 (interval=%ums)", g_sim.sample_interval_ms);
     } else {
         shell_print(sh, "启动失败: %d", ret);
     }
@@ -406,7 +430,7 @@ static int cmd_sim_interval(const struct shell* sh, size_t argc, char** argv)
         return -1;
     }
 
-    int err;
+    int err = 0;
     unsigned long ms = shell_strtoul(argv[1], 0, &err);
     if (err != 0 || ms == 0 || ms > 60000) {
         shell_print(sh, "采样周期范围: 1-60000 ms");
@@ -508,7 +532,7 @@ static int cmd_sim_inject(const struct shell* sh, size_t argc, char** argv)
 SHELL_STATIC_SUBCMD_SET_CREATE(
     sim_cmds,
     SHELL_CMD(status,    NULL, "显示模拟模块状态",                  cmd_sim_status),
-    SHELL_CMD(start,     NULL, "启动模拟数据采集",                  cmd_sim_start),
+    SHELL_CMD(start,     NULL, "启动模拟数据采集 [interval_ms]",     cmd_sim_start),
     SHELL_CMD(stop,      NULL, "停止模拟数据采集",                  cmd_sim_stop),
     SHELL_CMD(interval,  NULL, "设置采样周期: interval <ms>",       cmd_sim_interval),
     SHELL_CMD(config,    NULL, "配置通道: config <type> baseline|range <val>", cmd_sim_config),
