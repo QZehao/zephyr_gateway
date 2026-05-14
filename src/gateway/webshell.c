@@ -104,6 +104,7 @@ static int cmd_gateway_status(const struct shell* sh, size_t argc, char** argv)
     print_module_status(sh, "Anomaly:", "anomaly_detection");
     print_module_status(sh, "Cloud:", "cloud_upload");
     print_module_status(sh, "Cache:", "offline_cache");
+    print_module_status(sh, "Simulator:", "data_simulator");
 
     return 0;
 }

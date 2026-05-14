@@ -165,6 +165,11 @@ static void gateway_print_banner(void)
 #else
 	printk("    [-] MQTT 上云 (禁用)\n");
 #endif
+#if GATEWAY_DATA_SIMULATOR_ENABLE
+	printk("    [+] 数据模拟采集\n");
+#else
+	printk("    [-] 数据模拟采集 (禁用)\n");
+#endif
 	printk("  业务层:\n");
 #if GATEWAY_ANOMALY_ENABLE
 	printk("    [+] 自适应阈值异常检测\n");

@@ -64,6 +64,11 @@ zephyr_library_sources_ifdef(
 )
 
 zephyr_library_sources_ifdef(
+  CONFIG_GATEWAY_DATA_SIMULATOR_ENABLE
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/data_simulator.c
+)
+
+zephyr_library_sources_ifdef(
   CONFIG_GATEWAY_WEBSHELL_ENABLE
   ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/webshell.c
 )

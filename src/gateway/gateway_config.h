@@ -82,6 +82,12 @@ extern "C" {
 #define GATEWAY_WEBSHELL_ENABLE 0
 #endif
 
+#ifdef CONFIG_GATEWAY_DATA_SIMULATOR_ENABLE
+#define GATEWAY_DATA_SIMULATOR_ENABLE 1
+#else
+#define GATEWAY_DATA_SIMULATOR_ENABLE 0
+#endif
+
 /* =============================================================================
  * 线程配置
  * ============================================================================= */
@@ -142,6 +148,7 @@ extern "C" {
  * SYS_INIT 优先级（在 framework 已有优先级之后）
  * ============================================================================= */
 
+#define GATEWAY_INIT_PRIO_SIMULATOR       69
 #define GATEWAY_INIT_PRIO_PROTOCOL_CAN    70
 #define GATEWAY_INIT_PRIO_PROTOCOL_MODBUS 71
 #define GATEWAY_INIT_PRIO_PROTOCOL_ETH    72

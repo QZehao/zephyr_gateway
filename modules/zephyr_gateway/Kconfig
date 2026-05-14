@@ -245,6 +245,14 @@ config GATEWAY_OFFLINE_CACHE_ENTRY_SIZE
 	default 256
 	range 64 512
 
+config GATEWAY_DATA_SIMULATOR_ENABLE
+	bool "Enable data simulator for functional testing"
+	depends on ZEPHYR_GATEWAY_BUSINESS
+	default n
+	help
+	  Generate random sensor data with configurable baseline and range.
+	  Used for testing data pipeline without real CAN/Modbus hardware.
+
 config GATEWAY_WEBSHELL_ENABLE
 	bool "Enable gateway shell commands"
 	depends on ZEPHYR_GATEWAY_BUSINESS
