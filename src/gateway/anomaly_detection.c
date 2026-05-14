@@ -39,14 +39,6 @@ BUILD_ASSERT(MAX_SENSOR_TYPES >= SENSOR_TYPE_COUNT,
 #define ANOMALY_LEVEL_CRITICAL  2
 #define ANOMALY_LEVEL_EMERGENCY 3
 
-/* control 命令参数结构 */
-typedef struct {
-    uint8_t sensor_type;
-    float   warning_sigma;
-    float   critical_sigma;
-    float   emergency_sigma;
-} anomaly_threshold_cmd_t;
-
 /* =============================================================================
  * 内部数据结构
  * ============================================================================= */
@@ -79,6 +71,10 @@ typedef struct {
     uint16_t alert_interval_ms;  /* 同一传感器最小告警间隔 */
     /* 联动状态 */
     uint32_t last_multi_dim_alert_ms;
+    /* 最近检测状态（用于多维度联动，基线不包含当前值） */
+    float   last_value[MAX_SENSOR_TYPES];
+    uint8_t last_level[MAX_SENSOR_TYPES];
+    float   last_sigma[MAX_SENSOR_TYPES];
 } anomaly_detection_cb_t;
 
 /* =============================================================================
@@ -249,9 +245,14 @@ static void anomaly_on_sensor_data(const gateway_sensor_data_t* sensor)
 
     sensor_window_t* win = &g_ad.windows[sensor->sensor_type];
 
-    /* 检测 */
+    /* 检测（窗口更新前，基线不包含当前值） */
     float sigma = 0.0f;
     uint8_t level = anomaly_detect(win, sensor->value, sensor->sensor_type, &sigma);
+
+    /* 保存最近检测状态 */
+    g_ad.last_value[sensor->sensor_type] = sensor->value;
+    g_ad.last_level[sensor->sensor_type] = level;
+    g_ad.last_sigma[sensor->sensor_type] = sigma;
 
     /* 更新窗口 */
     anomaly_update_window(win, sensor->value);
@@ -261,8 +262,10 @@ static void anomaly_on_sensor_data(const gateway_sensor_data_t* sensor)
         anomaly_publish_event(level, sensor, win->mean, win->stddev, sigma);
     }
 
-    /* 多维度联动检测 */
-    if (g_ad.multi_dim_enable) {
+    /* 多维度联动检测（仅在相关传感器数据到达时触发） */
+    if (g_ad.multi_dim_enable &&
+        (sensor->sensor_type == SENSOR_TYPE_CURRENT ||
+         sensor->sensor_type == SENSOR_TYPE_TEMPERATURE)) {
         anomaly_check_multi_dim();
     }
 }
@@ -403,20 +406,9 @@ static void anomaly_check_multi_dim(void)
     /* 联动规则：电流 + 温度同时超过 critical 阈值 -> 触发联动告警 */
     if (MAX_SENSOR_TYPES < 2) return;
 
-    sensor_window_t* current_win = &g_ad.windows[SENSOR_TYPE_CURRENT];
-    sensor_window_t* temp_win    = &g_ad.windows[SENSOR_TYPE_TEMPERATURE];
-
-    if (!current_win->valid || !temp_win->valid) return;
-
-    /* 获取最新值（窗口 head 的前一个位置） */
-    uint16_t cur_idx = (current_win->head + ANOMALY_WINDOW_SIZE - 1) % ANOMALY_WINDOW_SIZE;
-    uint16_t temp_idx= (temp_win->head    + ANOMALY_WINDOW_SIZE - 1) % ANOMALY_WINDOW_SIZE;
-    float current_val = current_win->values[cur_idx];
-    float temp_val    = temp_win->values[temp_idx];
-
-    float cur_sigma = 0.0f, temp_sigma = 0.0f;
-    uint8_t cur_level  = anomaly_detect(current_win, current_val, SENSOR_TYPE_CURRENT, &cur_sigma);
-    uint8_t temp_level = anomaly_detect(temp_win,    temp_val,    SENSOR_TYPE_TEMPERATURE, &temp_sigma);
+    /* 使用保存的检测状态（基线不包含当前值） */
+    uint8_t cur_level  = g_ad.last_level[SENSOR_TYPE_CURRENT];
+    uint8_t temp_level = g_ad.last_level[SENSOR_TYPE_TEMPERATURE];
 
     /* 两者均 Critical 或以上时触发联动 */
     if (cur_level >= ANOMALY_LEVEL_CRITICAL && temp_level >= ANOMALY_LEVEL_CRITICAL) {
@@ -424,8 +416,10 @@ static void anomaly_check_multi_dim(void)
         if ((now - g_ad.last_multi_dim_alert_ms) >= g_ad.alert_interval_ms) {
             g_ad.last_multi_dim_alert_ms = now;
             LOG_ERR("多维度联动告警: 电流=%.2f(sigma=%.1f) + 温度=%.2f(sigma=%.1f)",
-                    (double)current_val, (double)cur_sigma,
-                    (double)temp_val, (double)temp_sigma);
+                    (double)g_ad.last_value[SENSOR_TYPE_CURRENT],
+                    (double)g_ad.last_sigma[SENSOR_TYPE_CURRENT],
+                    (double)g_ad.last_value[SENSOR_TYPE_TEMPERATURE],
+                    (double)g_ad.last_sigma[SENSOR_TYPE_TEMPERATURE]);
             /* 可在此发布联动告警事件，如需要 */
         }
     }

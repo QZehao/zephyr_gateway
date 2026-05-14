@@ -452,6 +452,9 @@ static int resolve_broker_addr(struct sockaddr_storage* addr)
     if (addr->ss_family == AF_INET) {
         struct sockaddr_in* sin = (struct sockaddr_in*)addr;
         sin->sin_port = htons(CONFIG_GATEWAY_MQTT_BROKER_PORT);
+    } else if (addr->ss_family == AF_INET6) {
+        struct sockaddr_in6* sin6 = (struct sockaddr_in6*)addr;
+        sin6->sin6_port = htons(CONFIG_GATEWAY_MQTT_BROKER_PORT);
     }
 
     zsock_freeaddrinfo(res);

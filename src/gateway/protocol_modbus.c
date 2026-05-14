@@ -215,9 +215,10 @@ int protocol_modbus_control(int cmd, void* arg)
         }
         return 0;
     case MODBUS_CMD_SET_SLAVE_ID:
-        if (arg != NULL) {
-            g_modbus.slave_id = *(uint8_t*)arg;
+        if (arg == NULL) {
+            return -1;
         }
+        g_modbus.slave_id = *(uint8_t*)arg;
         return 0;
     default:
         return -1;
@@ -320,6 +321,9 @@ static void modbus_uart_irq_cb(const struct device* dev, void* user_data)
         if (uart_fifo_read(dev, &byte, 1) > 0) {
             if (cb->rx_len < MODBUS_RX_BUF_SIZE) {
                 cb->rx_buf[cb->rx_len++] = byte;
+            } else {
+                cb->err_count++;
+                LOG_WRN("Modbus RX 缓冲区溢出");
             }
         }
     }

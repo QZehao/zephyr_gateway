@@ -220,7 +220,7 @@ static void cloud_on_sensor_data(const gateway_sensor_data_t *sensor)
     /* 格式化为 JSON */
     char json[CLOUD_JSON_BUF_SIZE];
     int len = gateway_sensor_to_json(sensor, json, sizeof(json));
-    if (len <= 0)
+    if (len <= 0 || (size_t)len >= sizeof(json))
     {
         return;
     }
@@ -243,7 +243,7 @@ static void cloud_on_anomaly(const gateway_anomaly_event_t *evt)
 
     char json[CLOUD_JSON_BUF_SIZE];
     int len = gateway_anomaly_to_json(evt, json, sizeof(json));
-    if (len <= 0)
+    if (len <= 0 || (size_t)len >= sizeof(json))
     {
         return;
     }

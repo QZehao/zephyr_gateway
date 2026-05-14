@@ -144,13 +144,14 @@ int protocol_can_stop(void)
         return 0;
     }
 
+    /* 先通知线程退出，再停硬件 */
+    g_can.status = MODULE_STATUS_STOPPED;
+
     /* 停止 CAN */
     if (g_can.dev != NULL) {
         can_stop(g_can.dev);
     }
 
-    /* 信号线程退出 */
-    g_can.status = MODULE_STATUS_STOPPED;
     k_thread_join(&g_can.rx_thread, K_MSEC(500));
 
     LOG_INF("CAN 模块已停止");

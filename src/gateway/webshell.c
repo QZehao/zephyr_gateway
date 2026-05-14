@@ -175,11 +175,13 @@ static int cmd_anomaly_config(const struct shell* sh, size_t argc, char** argv)
         return -1;
     }
 
-    uint8_t sensor_type = (uint8_t)shell_strtoul(argv[1], 0, NULL);
-    if (sensor_type >= 5) {
+    int err;
+    unsigned long sensor_type_ul = shell_strtoul(argv[1], 0, &err);
+    if (err != 0 || sensor_type_ul >= 5) {
         shell_print(sh, "sensor_type 范围: 0-4");
         return -1;
     }
+    uint8_t sensor_type = (uint8_t)sensor_type_ul;
 
     char* endptr;
     float w = strtof(argv[2], &endptr);

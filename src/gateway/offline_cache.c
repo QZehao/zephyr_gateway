@@ -31,6 +31,7 @@ LOG_MODULE_REGISTER(offline_cache, CONFIG_SYS_LOG_LEVEL);
 #define CACHE_MAX_ENTRIES    GATEWAY_CACHE_MAX_ENTRIES
 #define CACHE_ENTRY_SIZE     GATEWAY_CACHE_ENTRY_SIZE
 #define CACHE_NVS_ID_START   64
+#define CACHE_COUNT_ID       61
 #define CACHE_HEAD_ID        62
 #define CACHE_TAIL_ID        63
 
@@ -40,7 +41,8 @@ LOG_MODULE_REGISTER(offline_cache, CONFIG_SYS_LOG_LEVEL);
 
 typedef struct {
     uint32_t timestamp;
-    char     data[CACHE_ENTRY_SIZE - sizeof(uint32_t)];
+    uint8_t  data_type;  /* 0=传感器, 1=异常, 2=心跳 */
+    char     data[CACHE_ENTRY_SIZE - sizeof(uint32_t) - sizeof(uint8_t)];
 } cache_entry_t;
 
 /* 编译时检查大小 */
@@ -77,8 +79,8 @@ static offline_cache_cb_t g_cache;
 
 static void cache_on_cloud_upload(const gateway_cloud_data_t* data);
 static void cache_on_net_state(bool connected);
-static int  cache_write_entry(const char* json_data);
-static int  cache_read_entry(char* out_data, size_t out_size);
+static int  cache_write_entry(const char* json_data, uint8_t data_type);
+static int  cache_read_entry(char* out_data, size_t out_size, uint8_t* out_data_type);
 static int  cache_nvs_init(void);
 static void cache_save_state(void);
 static void cache_load_state(void);
@@ -219,7 +221,7 @@ static void cache_on_cloud_upload(const gateway_cloud_data_t* data)
 
     k_mutex_lock(&g_cache.lock, K_FOREVER);
 
-    int ret = cache_write_entry(data->json_payload);
+    int ret = cache_write_entry(data->json_payload, data->data_type);
     if (ret == 0) {
         g_cache.write_count++;
         LOG_DBG("离线缓存写入成功: %s", data->json_payload);
@@ -246,13 +248,14 @@ static void cache_on_net_state(bool connected)
         char json[CACHE_ENTRY_SIZE];
 
         while (g_cache.count > 0) {
-            int ret = cache_read_entry(json, sizeof(json));
+            uint8_t data_type = 0;
+            int ret = cache_read_entry(json, sizeof(json), &data_type);
             if (ret != 0) break;
 
             /* 重新发布为 CLOUD_UPLOAD 事件 */
             gateway_cloud_data_t data = {
                 .timestamp = k_uptime_get_32(),
-                .data_type = 0,
+                .data_type = data_type,
             };
             strncpy(data.json_payload, json, sizeof(data.json_payload) - 1);
             data.json_payload[sizeof(data.json_payload) - 1] = '\0';
@@ -276,13 +279,14 @@ static void cache_on_net_state(bool connected)
     }
 }
 
-static int cache_write_entry(const char* json_data)
+static int cache_write_entry(const char* json_data, uint8_t data_type)
 {
     if (g_cache.fs.flash_device == NULL) {
         /* 内存模式：保存到内存环形缓冲区 */
         uint16_t idx = g_cache.head;
         cache_entry_t* entry = (cache_entry_t*)&g_cache.mem_buf[idx];
         entry->timestamp = k_uptime_get_32();
+        entry->data_type = data_type;
         strncpy(entry->data, json_data, sizeof(entry->data) - 1);
         entry->data[sizeof(entry->data) - 1] = '\0';
 
@@ -298,6 +302,7 @@ static int cache_write_entry(const char* json_data)
     uint16_t nvs_id = CACHE_NVS_ID_START + g_cache.head;
     cache_entry_t entry;
     entry.timestamp = k_uptime_get_32();
+    entry.data_type = data_type;
     strncpy(entry.data, json_data, sizeof(entry.data) - 1);
     entry.data[sizeof(entry.data) - 1] = '\0';
 
@@ -321,7 +326,7 @@ static int cache_write_entry(const char* json_data)
     return 0;
 }
 
-static int cache_read_entry(char* out_data, size_t out_size)
+static int cache_read_entry(char* out_data, size_t out_size, uint8_t* out_data_type)
 {
     if (g_cache.count == 0) {
         return -1;
@@ -337,11 +342,17 @@ static int cache_read_entry(char* out_data, size_t out_size)
             return ret;
         }
 
+        if (out_data_type != NULL) {
+            *out_data_type = entry.data_type;
+        }
         strncpy(out_data, entry.data, out_size - 1);
         out_data[out_size - 1] = '\0';
     } else {
         /* 内存模式：从内存缓冲区读取 */
         cache_entry_t* entry = (cache_entry_t*)&g_cache.mem_buf[g_cache.tail];
+        if (out_data_type != NULL) {
+            *out_data_type = entry->data_type;
+        }
         strncpy(out_data, entry->data, out_size - 1);
         out_data[out_size - 1] = '\0';
     }
@@ -396,6 +407,10 @@ static void cache_save_state(void)
     if (g_cache.fs.flash_device == NULL) return;
 
     int ret;
+    ret = nvs_write(&g_cache.fs, CACHE_COUNT_ID, &g_cache.count, sizeof(g_cache.count));
+    if (ret < 0) {
+        LOG_WRN("保存 count 状态失败: %d", ret);
+    }
     ret = nvs_write(&g_cache.fs, CACHE_HEAD_ID, &g_cache.head, sizeof(g_cache.head));
     if (ret < 0) {
         LOG_WRN("保存 head 状态失败: %d", ret);
@@ -413,7 +428,13 @@ static void cache_load_state(void)
     size_t len = sizeof(g_cache.head);
     uint16_t loaded_head = 0;
     uint16_t loaded_tail = 0;
+    uint16_t loaded_count = 0;
 
+    if (nvs_read(&g_cache.fs, CACHE_COUNT_ID, &loaded_count, sizeof(loaded_count)) >= 0) {
+        if (loaded_count <= CACHE_MAX_ENTRIES) {
+            g_cache.count = loaded_count;
+        }
+    }
     if (nvs_read(&g_cache.fs, CACHE_HEAD_ID, &loaded_head, len) >= 0) {
         if (loaded_head < CACHE_MAX_ENTRIES) {
             g_cache.head = loaded_head;
@@ -425,11 +446,13 @@ static void cache_load_state(void)
         }
     }
 
-    /* 恢复 count */
-    if (g_cache.head >= g_cache.tail) {
-        g_cache.count = g_cache.head - g_cache.tail;
-    } else {
-        g_cache.count = CACHE_MAX_ENTRIES - g_cache.tail + g_cache.head;
+    /* 校验一致性：若 count 未加载成功，回退到基于 head/tail 的估算 */
+    if (g_cache.count == 0 && g_cache.head != g_cache.tail) {
+        if (g_cache.head >= g_cache.tail) {
+            g_cache.count = g_cache.head - g_cache.tail;
+        } else {
+            g_cache.count = CACHE_MAX_ENTRIES - g_cache.tail + g_cache.head;
+        }
     }
     if (g_cache.count > CACHE_MAX_ENTRIES) {
         g_cache.count = 0;
