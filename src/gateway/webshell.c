@@ -125,6 +125,49 @@ static int cmd_can_stats(const struct shell* sh, size_t argc, char** argv)
 
     return 0;
 }
+
+static int cmd_can_start(const struct shell* sh, size_t argc, char** argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+
+    uint32_t module_id = module_manager_get_id_by_name("protocol_can");
+    if (module_id == 0) {
+        shell_print(sh, "CAN 模块未注册");
+        return -1;
+    }
+
+    int ret = module_manager_start_module(module_id);
+    if (ret == 0) {
+        shell_print(sh, "CAN 模块已启动");
+    } else if (ret == -EINVAL) {
+        shell_print(sh, "CAN 模块已在运行");
+        ret = 0;
+    } else {
+        shell_print(sh, "CAN 启动失败: %d", ret);
+    }
+    return ret;
+}
+
+static int cmd_can_stop(const struct shell* sh, size_t argc, char** argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+
+    uint32_t module_id = module_manager_get_id_by_name("protocol_can");
+    if (module_id == 0) {
+        shell_print(sh, "CAN 模块未注册");
+        return -1;
+    }
+
+    int ret = module_manager_stop_module(module_id);
+    if (ret == 0) {
+        shell_print(sh, "CAN 模块已停止");
+    } else {
+        shell_print(sh, "CAN 停止失败: %d", ret);
+    }
+    return ret;
+}
 #endif
 
 #if GATEWAY_MODBUS_ENABLE
@@ -162,6 +205,85 @@ static int cmd_modbus_read(const struct shell* sh, size_t argc, char** argv)
         shell_print(sh, "Modbus 读取失败: %d", ret);
     }
 
+    return ret;
+}
+
+static int cmd_modbus_start(const struct shell* sh, size_t argc, char** argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+
+    uint32_t module_id = module_manager_get_id_by_name("protocol_modbus");
+    if (module_id == 0) {
+        shell_print(sh, "Modbus 模块未注册");
+        return -1;
+    }
+
+    int ret = module_manager_start_module(module_id);
+    if (ret == 0) {
+        shell_print(sh, "Modbus 模块已启动");
+    } else if (ret == -EINVAL) {
+        shell_print(sh, "Modbus 模块已在运行");
+        ret = 0;
+    } else {
+        shell_print(sh, "Modbus 启动失败: %d", ret);
+    }
+    return ret;
+}
+
+static int cmd_modbus_stop(const struct shell* sh, size_t argc, char** argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+
+    uint32_t module_id = module_manager_get_id_by_name("protocol_modbus");
+    if (module_id == 0) {
+        shell_print(sh, "Modbus 模块未注册");
+        return -1;
+    }
+
+    int ret = module_manager_stop_module(module_id);
+    if (ret == 0) {
+        shell_print(sh, "Modbus 模块已停止");
+    } else {
+        shell_print(sh, "Modbus 停止失败: %d", ret);
+    }
+    return ret;
+}
+
+static int cmd_modbus_interval(const struct shell* sh, size_t argc, char** argv)
+{
+    if (argc < 2) {
+        shell_print(sh, "用法: modbus interval <ms>");
+        return -1;
+    }
+
+    int err = 0;
+    unsigned long ms = shell_strtoul(argv[1], 0, &err);
+    if (err != 0 || ms == 0 || ms > 60000) {
+        shell_print(sh, "轮询周期范围: 1-60000 ms");
+        return -1;
+    }
+
+    uint32_t module_id = module_manager_get_id_by_name("protocol_modbus");
+    if (module_id == 0) {
+        shell_print(sh, "Modbus 模块未注册");
+        return -1;
+    }
+
+    module_info_t info;
+    int ret = -1;
+    if (module_manager_get_module_info(module_id, &info) == 0 &&
+        info.interface != NULL && info.interface->control) {
+        uint32_t interval = (uint32_t)ms;
+        ret = info.interface->control(MODBUS_CMD_SET_INTERVAL, &interval);
+    }
+
+    if (ret == 0) {
+        shell_print(sh, "Modbus 轮询周期设为 %lu ms", ms);
+    } else {
+        shell_print(sh, "设置失败: %d", ret);
+    }
     return ret;
 }
 #endif
@@ -296,13 +418,18 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 SHELL_STATIC_SUBCMD_SET_CREATE(
     can_cmds,
     SHELL_CMD(stats, NULL, "显示 CAN 统计", cmd_can_stats),
+    SHELL_CMD(start, NULL, "启动 CAN 采集", cmd_can_start),
+    SHELL_CMD(stop,  NULL, "停止 CAN 采集", cmd_can_stop),
     SHELL_SUBCMD_SET_END);
 #endif
 
 #if GATEWAY_MODBUS_ENABLE
 SHELL_STATIC_SUBCMD_SET_CREATE(
     modbus_cmds,
-    SHELL_CMD(read, NULL, "读取 Modbus 保持寄存器: read <addr> <count>", cmd_modbus_read),
+    SHELL_CMD(read,     NULL, "读取 Modbus 保持寄存器: read <addr> <count>", cmd_modbus_read),
+    SHELL_CMD(start,    NULL, "启动 Modbus 轮询", cmd_modbus_start),
+    SHELL_CMD(stop,     NULL, "停止 Modbus 轮询", cmd_modbus_stop),
+    SHELL_CMD(interval, NULL, "设置轮询周期: interval <ms>", cmd_modbus_interval),
     SHELL_SUBCMD_SET_END);
 #endif
 

@@ -21,6 +21,7 @@ extern "C" {
 #define MODBUS_CMD_READ_REGS     1  /* 读取保持寄存器 */
 #define MODBUS_CMD_GET_STATS     2  /* 获取统计 */
 #define MODBUS_CMD_SET_SLAVE_ID  3  /* 设置从站 ID */
+#define MODBUS_CMD_SET_INTERVAL  4  /* 设置轮询周期 (ms) */
 
 /* =============================================================================
  * 控制命令参数结构

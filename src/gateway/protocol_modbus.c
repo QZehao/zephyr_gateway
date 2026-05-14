@@ -220,6 +220,12 @@ int protocol_modbus_control(int cmd, void* arg)
         }
         g_modbus.slave_id = *(uint8_t*)arg;
         return 0;
+    case MODBUS_CMD_SET_INTERVAL:
+        if (arg == NULL) {
+            return -1;
+        }
+        g_modbus.poll_interval_ms = *(uint32_t*)arg;
+        return 0;
     default:
         return -1;
     }
