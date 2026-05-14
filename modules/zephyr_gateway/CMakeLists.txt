@@ -34,7 +34,28 @@ zephyr_library_sources_ifdef(
 
 zephyr_library_sources_ifdef(
   CONFIG_GATEWAY_CLOUD_UPLOAD_ENABLE
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/cloud_provider.c
   ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/cloud_upload.c
+)
+
+zephyr_library_sources_ifdef(
+  CONFIG_GATEWAY_CLOUD_PROVIDER_PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/cloud_private.c
+)
+
+zephyr_library_sources_ifdef(
+  CONFIG_GATEWAY_CLOUD_PROVIDER_ALIYUN
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/cloud_aliyun.c
+)
+
+zephyr_library_sources_ifdef(
+  CONFIG_GATEWAY_CLOUD_PROVIDER_TENCENT
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/cloud_tencent.c
+)
+
+zephyr_library_sources_ifdef(
+  CONFIG_GATEWAY_CLOUD_PROVIDER_AWS
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/cloud_aws.c
 )
 
 zephyr_library_sources_ifdef(

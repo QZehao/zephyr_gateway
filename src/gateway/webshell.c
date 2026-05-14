@@ -214,26 +214,28 @@ static int cmd_anomaly_config(const struct shell* sh, size_t argc, char** argv)
 }
 #endif
 
-#if GATEWAY_MQTT_ENABLE
+#if GATEWAY_CLOUD_UPLOAD_ENABLE
+#include "cloud_provider.h"
+
 static int cmd_cloud_status(const struct shell* sh, size_t argc, char** argv)
 {
     ARG_UNUSED(argc);
     ARG_UNUSED(argv);
 
-    bool connected = protocol_eth_is_connected();
     uint32_t s, f, cached;
     cloud_upload_get_stats(&s, &f, &cached);
 
-    uint32_t c_conn, c_disconn, c_msg;
-    protocol_eth_get_stats(&c_conn, &c_disconn, &c_msg);
-
     shell_print(sh, "=== 云端状态 ===");
-    shell_print(sh, "MQTT 连接: %s", connected ? "已连接" : "未连接");
-    shell_print(sh, "Broker:    %s:%d", CONFIG_GATEWAY_MQTT_BROKER_ADDR, CONFIG_GATEWAY_MQTT_BROKER_PORT);
-    shell_print(sh, "Client ID: %s", CONFIG_GATEWAY_MQTT_CLIENT_ID);
-    shell_print(sh, "连接次数:  %lu", (unsigned long)c_conn);
-    shell_print(sh, "断开次数:  %lu", (unsigned long)c_disconn);
-    shell_print(sh, "发送消息:  %lu", (unsigned long)c_msg);
+    shell_print(sh, "已注册 Provider 数: %u", cloud_provider_get_count());
+
+    uint8_t count = cloud_provider_get_count();
+    for (uint8_t i = 0; i < count; i++) {
+        const cloud_provider_t* p = cloud_provider_get_by_index(i);
+        if (p != NULL && p->print_status != NULL) {
+            p->print_status(sh);
+        }
+    }
+
     shell_print(sh, "上传成功:  %lu", (unsigned long)s);
     shell_print(sh, "上传失败:  %lu", (unsigned long)f);
     shell_print(sh, "缓存数据:  %lu", (unsigned long)cached);
@@ -310,7 +312,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_SUBCMD_SET_END);
 #endif
 
-#if GATEWAY_MQTT_ENABLE
+#if GATEWAY_CLOUD_UPLOAD_ENABLE
 SHELL_STATIC_SUBCMD_SET_CREATE(
     cloud_cmds,
     SHELL_CMD(status, NULL, "显示云端连接状态", cmd_cloud_status),
@@ -335,7 +337,7 @@ SHELL_CMD_REGISTER(modbus, &modbus_cmds, "Modbus 命令", NULL);
 #if GATEWAY_ANOMALY_ENABLE
 SHELL_CMD_REGISTER(anomaly, &anomaly_cmds, "异常检测命令", NULL);
 #endif
-#if GATEWAY_MQTT_ENABLE
+#if GATEWAY_CLOUD_UPLOAD_ENABLE
 SHELL_CMD_REGISTER(cloud, &cloud_cmds, "云端连接命令", NULL);
 #endif
 #if GATEWAY_OFFLINE_CACHE_ENABLE

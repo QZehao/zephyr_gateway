@@ -1,6 +1,9 @@
 /**
  * @file cloud_upload.h
- * @brief MQTT 数据上云模块
+ * @brief 云数据上传模块
+ *
+ * 订阅传感器数据和异常事件，格式化为 JSON，通过 cloud_provider 抽象层
+ * 向所有已注册的云平台 Provider 分发数据。
  */
 
 #ifndef CLOUD_UPLOAD_H

@@ -17,6 +17,19 @@
 #include "webshell.h"
 #include "app_config.h"
 
+#if GATEWAY_CLOUD_PROVIDER_PRIVATE
+#include "cloud_private.h"
+#endif
+#if GATEWAY_CLOUD_PROVIDER_ALIYUN
+#include "cloud_aliyun.h"
+#endif
+#if GATEWAY_CLOUD_PROVIDER_TENCENT
+#include "cloud_tencent.h"
+#endif
+#if GATEWAY_CLOUD_PROVIDER_AWS
+#include "cloud_aws.h"
+#endif
+
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
@@ -41,13 +54,11 @@ static const gateway_subscription_t g_subscriptions[] = {
 	/* anomaly_detection 订阅 sensor 数据 */
 	{"anomaly_detection", EVENT_TYPE_SENSOR_DATA},
 
-	/* cloud_upload 订阅 sensor、anomaly 和网络状态 */
+	/* cloud_upload 订阅 sensor、anomaly */
 	{"cloud_upload", EVENT_TYPE_SENSOR_DATA},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_WARNING},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_CRITICAL},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_EMERGENCY},
-	{"cloud_upload", EVENT_TYPE_CLOUD_CONNECTED},
-	{"cloud_upload", EVENT_TYPE_CLOUD_DISCONNECTED},
 
 	/* offline_cache 订阅 cloud_upload 事件和网络状态 */
 	{"offline_cache", EVENT_TYPE_CLOUD_UPLOAD},
@@ -174,6 +185,19 @@ static void gateway_print_banner(void)
 	printk("    [+] Shell 命令扩展\n");
 #else
 	printk("    [-] Shell 命令扩展 (禁用)\n");
+#endif
+	printk("  云平台:\n");
+#if GATEWAY_CLOUD_PROVIDER_PRIVATE
+	printk("    [+] 私有 MQTT Broker\n");
+#endif
+#if GATEWAY_CLOUD_PROVIDER_ALIYUN
+	printk("    [+] 阿里云 IoT\n");
+#endif
+#if GATEWAY_CLOUD_PROVIDER_TENCENT
+	printk("    [+] 腾讯云 IoT Hub\n");
+#endif
+#if GATEWAY_CLOUD_PROVIDER_AWS
+	printk("    [+] AWS IoT Core\n");
 #endif
 	printk("=================================================\n");
 	printk("\n");

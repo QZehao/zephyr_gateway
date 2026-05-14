@@ -130,10 +130,38 @@ config GATEWAY_ANOMALY_EMERGENCY_SIGMA
 config GATEWAY_CLOUD_UPLOAD_ENABLE
 	bool "Enable cloud data upload module"
 	depends on ZEPHYR_GATEWAY_BUSINESS
-	depends on GATEWAY_MQTT_ENABLE
 	default y
 	help
-	  Subscribe to sensor/anomaly events and upload via MQTT.
+	  Subscribe to sensor/anomaly events and upload via cloud provider.
+
+if GATEWAY_CLOUD_UPLOAD_ENABLE
+
+config GATEWAY_CLOUD_PROVIDER_PRIVATE
+	bool "Private MQTT broker"
+	default y
+	depends on GATEWAY_MQTT_ENABLE
+	help
+	  Connect to a private/self-hosted MQTT broker using standard MQTT.
+
+config GATEWAY_CLOUD_PROVIDER_ALIYUN
+	bool "Alibaba Cloud IoT"
+	depends on GATEWAY_MQTT_ENABLE
+	help
+	  Connect to Alibaba Cloud IoT Platform.
+
+config GATEWAY_CLOUD_PROVIDER_TENCENT
+	bool "Tencent Cloud IoT Hub"
+	depends on GATEWAY_MQTT_ENABLE
+	help
+	  Connect to Tencent Cloud IoT Hub.
+
+config GATEWAY_CLOUD_PROVIDER_AWS
+	bool "AWS IoT Core"
+	depends on GATEWAY_MQTT_ENABLE
+	help
+	  Connect to AWS IoT Core (requires TLS support).
+
+endif # GATEWAY_CLOUD_UPLOAD_ENABLE
 
 config GATEWAY_CLOUD_UPLOAD_INTERVAL_MS
 	int "Normal upload interval (ms)"

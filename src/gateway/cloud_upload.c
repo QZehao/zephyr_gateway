@@ -9,7 +9,7 @@
 #include "cloud_upload.h"
 #include "gateway_events.h"
 #include "gateway_config.h"
-#include "protocol_eth.h"
+#include "cloud_provider.h"
 #include "app_config.h"
 
 #include <zephyr/init.h>
@@ -27,8 +27,6 @@ LOG_MODULE_REGISTER(cloud_upload, CONFIG_SYS_LOG_LEVEL);
  * ============================================================================= */
 
 #define CLOUD_JSON_BUF_SIZE 256
-#define CLOUD_TOPIC_TELEMETRY CONFIG_GATEWAY_MQTT_TOPIC_TELEMETRY
-#define CLOUD_TOPIC_ANOMALY CONFIG_GATEWAY_MQTT_TOPIC_ANOMALY
 
 /* =============================================================================
  * 内部数据结构
@@ -44,8 +42,6 @@ typedef struct
     /* 定时器 */
     uint32_t last_upload_ms;
     uint32_t upload_interval_ms;
-    /* 网络状态（通过事件更新，替代 protocol_eth_is_connected 直接调用） */
-    bool net_connected;
     /* 缓存 */
     gateway_sensor_data_t last_sensor;
     bool has_pending_sensor;
@@ -63,8 +59,7 @@ static cloud_upload_cb_t g_cloud;
 
 static void cloud_on_sensor_data(const gateway_sensor_data_t *sensor);
 static void cloud_on_anomaly(const gateway_anomaly_event_t *evt);
-static int cloud_send_json(const char *topic, const char *json);
-static void cloud_handle_offline(const char *topic, const char *json);
+static void cloud_handle_offline(uint8_t data_type, const char *json);
 
 /* =============================================================================
  * 模块接口实现
@@ -141,16 +136,6 @@ void cloud_upload_on_event(const event_t *event, void *user_data)
             cloud_on_anomaly((const gateway_anomaly_event_t *)gateway_event_data(event));
         }
         break;
-
-    case EVENT_TYPE_CLOUD_CONNECTED:
-        g_cloud.net_connected = true;
-        LOG_INF("网络已连接");
-        break;
-
-    case EVENT_TYPE_CLOUD_DISCONNECTED:
-        g_cloud.net_connected = false;
-        LOG_INF("网络已断开");
-        break;
     }
 }
 
@@ -225,12 +210,17 @@ static void cloud_on_sensor_data(const gateway_sensor_data_t *sensor)
         return;
     }
 
-    /* 尝试发送 */
-    int ret = cloud_send_json(CLOUD_TOPIC_TELEMETRY, json);
+    /* 向所有已注册的 Provider 发布 */
+    int ret = cloud_provider_publish_all(CLOUD_MSG_TELEMETRY, json);
     if (ret != 0)
     {
-        /* 断网：交给离线缓存 */
-        cloud_handle_offline(CLOUD_TOPIC_TELEMETRY, json);
+        /* 至少一个 Provider 失败：交给离线缓存 */
+        cloud_handle_offline(0, json);
+    }
+    else
+    {
+        g_cloud.success_count++;
+        LOG_DBG("云上传成功: %s", json);
     }
 
     g_cloud.has_pending_sensor = false;
@@ -249,39 +239,22 @@ static void cloud_on_anomaly(const gateway_anomaly_event_t *evt)
     }
 
     /* 异常数据立即发送，不受间隔限制 */
-    int ret = cloud_send_json(CLOUD_TOPIC_ANOMALY, json);
+    int ret = cloud_provider_publish_all(CLOUD_MSG_ANOMALY, json);
     if (ret != 0)
     {
-        cloud_handle_offline(CLOUD_TOPIC_ANOMALY, json);
-    }
-}
-
-static int cloud_send_json(const char *topic, const char *json)
-{
-    if (!g_cloud.net_connected)
-    {
-        return -1;
-    }
-
-    int ret = protocol_eth_mqtt_publish(topic, json, (uint16_t)strlen(json));
-    if (ret == 0)
-    {
-        g_cloud.success_count++;
-        LOG_DBG("MQTT 上传成功: %s", json);
+        cloud_handle_offline(1, json);
     }
     else
     {
-        g_cloud.fail_count++;
-        LOG_WRN("MQTT 上传失败: %d", ret);
+        g_cloud.success_count++;
     }
-    return ret;
 }
 
-static void cloud_handle_offline(const char *topic, const char *json)
+static void cloud_handle_offline(uint8_t data_type, const char *json)
 {
     gateway_cloud_data_t cache_data = {
         .timestamp = k_uptime_get_32(),
-        .data_type = (strcmp(topic, CLOUD_TOPIC_ANOMALY) == 0) ? 1 : 0,
+        .data_type = data_type,
     };
 
     strncpy(cache_data.json_payload, json, sizeof(cache_data.json_payload) - 1);
@@ -297,7 +270,7 @@ static void cloud_handle_offline(const char *topic, const char *json)
  * 模块接口声明与自动注册
  * ============================================================================= */
 
-static const char *const cloud_upload_deps[] = {"protocol_eth", NULL};
+static const char *const cloud_upload_deps[] = {NULL};
 
 DECLARE_MODULE_INTERFACE_WITH_DEPS(cloud_upload, cloud_upload_deps);
 
