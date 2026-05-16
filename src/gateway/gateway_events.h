@@ -21,10 +21,6 @@ extern "C" {
  * 范围 100-149: 工业网关专用
  * ============================================================================= */
 
-/* 协议层输出 */
-#define EVENT_TYPE_CAN_RX_DATA        100  /* CAN 帧原始数据 */
-#define EVENT_TYPE_MODBUS_DATA        101  /* Modbus 寄存器值 */
-
 /* 异常检测输出 */
 #define EVENT_TYPE_ANOMALY_WARNING    110  /* |x-μ|/σ ≥ warning_sigma（默认 2.0） */
 #define EVENT_TYPE_ANOMALY_CRITICAL   111  /* |x-μ|/σ ≥ critical_sigma（默认 3.0） */
