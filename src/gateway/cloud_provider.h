@@ -63,8 +63,11 @@ int cloud_provider_init(void);
 int cloud_provider_register(const cloud_provider_t* provider);
 
 /** 向所有已注册的 Provider 发布消息。
- *  返回值：0 表示全部成功，非零表示至少一个 Provider 失败 */
-int cloud_provider_publish_all(cloud_msg_type_t type, const char* json_payload);
+ *  @param[out] out_success_count  成功发布的 Provider 数量（可传 NULL）
+ *  @param[out] out_fail_count     失败的 Provider 数量（可传 NULL）
+ *  @return 0 表示全部成功，非零表示至少一个失败 */
+int cloud_provider_publish_all(cloud_msg_type_t type, const char* json_payload,
+                                uint8_t* out_success_count, uint8_t* out_fail_count);
 
 /** 获取已注册 Provider 数量 */
 uint8_t cloud_provider_get_count(void);

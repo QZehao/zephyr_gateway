@@ -74,7 +74,7 @@
 
 | 调用方 | 被调用方 | 说明 |
 |--------|----------|------|
-| `cloud_upload` | `cloud_provider_publish_all()` | 向所有已注册 Provider 分发 JSON；任一失败触发离线缓存 |
+| `cloud_upload` | `cloud_provider_publish_all()` | 向所有已注册 Provider 分发 JSON；全部失败才触发离线缓存 |
 | `cloud_private` / `cloud_aliyun` / `cloud_tencent` / `cloud_aws` | `protocol_eth_mqtt_publish()` | 各 Provider 将格式化后的数据通过公共 MQTT 通道发送 |
 | `cloud_private` / `cloud_aliyun` / `cloud_tencent` / `cloud_aws` | `protocol_eth_mqtt_set_auth()` | 各 Provider 在启动时设置 MQTT 认证参数（用户名/密码/证书） |
 | `webshell`（可选） | `protocol_eth_mqtt_publish()` | 将 Shell 输出回写响应 topic |
@@ -344,7 +344,7 @@ sensor/anomaly events → cloud_upload.c (JSON格式化 + 速率控制 + 离线�
 ```
 
 **断网处理**：
-- `cloud_provider_publish_all()` 任一 Provider 失败即触发离线缓存
+- `cloud_provider_publish_all()` 全部 Provider 失败时才触发离线缓存
 - 发布 `EVENT_TYPE_CLOUD_UPLOAD`，`offline_cache` 订阅并存储
 - 网络恢复后，`offline_cache` 重新发布存储的数据，`cloud_upload` 再次走 `cloud_provider_publish_all()` 分发
 

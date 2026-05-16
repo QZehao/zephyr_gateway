@@ -235,14 +235,14 @@ static void cloud_on_sensor_data(const gateway_sensor_data_t *sensor)
     }
 
     /* 向所有已注册的 Provider 发布 */
-    int ret = cloud_provider_publish_all(CLOUD_MSG_TELEMETRY, json);
-    if (ret != 0)
-    {
-        /* 至少一个 Provider 失败：交给离线缓存 */
+    uint8_t success_count = 0;
+    uint8_t fail_count = 0;
+    (void)cloud_provider_publish_all(CLOUD_MSG_TELEMETRY, json,
+                                      &success_count, &fail_count);
+    if (success_count == 0 && fail_count > 0) {
+        /* 全部 Provider 失败：交给离线缓存 */
         cloud_handle_offline(0, json);
-    }
-    else
-    {
+    } else {
         g_cloud.success_count++;
         LOG_DBG("云上传成功: %s", json);
     }
@@ -263,13 +263,13 @@ static void cloud_on_anomaly(const gateway_anomaly_event_t *evt)
     }
 
     /* 异常数据立即发送，不受间隔限制 */
-    int ret = cloud_provider_publish_all(CLOUD_MSG_ANOMALY, json);
-    if (ret != 0)
-    {
+    uint8_t success_count = 0;
+    uint8_t fail_count = 0;
+    (void)cloud_provider_publish_all(CLOUD_MSG_ANOMALY, json,
+                                      &success_count, &fail_count);
+    if (success_count == 0 && fail_count > 0) {
         cloud_handle_offline(1, json);
-    }
-    else
-    {
+    } else {
         g_cloud.success_count++;
     }
 }

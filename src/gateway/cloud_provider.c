@@ -67,13 +67,15 @@ int cloud_provider_register(const cloud_provider_t* provider)
     return 0;
 }
 
-int cloud_provider_publish_all(cloud_msg_type_t type, const char* json_payload)
+int cloud_provider_publish_all(cloud_msg_type_t type, const char* json_payload,
+                                uint8_t* out_success_count, uint8_t* out_fail_count)
 {
     if (json_payload == NULL) {
         return -EINVAL;
     }
 
-    int overall_ret = 0;
+    uint8_t success = 0;
+    uint8_t fail = 0;
 
     k_mutex_lock(&g_provider_lock, K_FOREVER);
 
@@ -81,15 +83,25 @@ int cloud_provider_publish_all(cloud_msg_type_t type, const char* json_payload)
         const cloud_provider_t* p = g_providers[i];
         if (p != NULL && p->publish != NULL) {
             int ret = p->publish(type, json_payload);
-            if (ret != 0) {
+            if (ret == 0) {
+                success++;
+            } else {
                 LOG_DBG("Provider '%s' publish failed: %d", p->name, ret);
-                overall_ret = ret;
+                fail++;
             }
         }
     }
 
     k_mutex_unlock(&g_provider_lock);
-    return overall_ret;
+
+    if (out_success_count != NULL) {
+        *out_success_count = success;
+    }
+    if (out_fail_count != NULL) {
+        *out_fail_count = fail;
+    }
+
+    return (fail > 0) ? -EIO : 0;
 }
 
 uint8_t cloud_provider_get_count(void)
