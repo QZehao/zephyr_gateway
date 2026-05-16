@@ -193,16 +193,8 @@ int anomaly_detection_shutdown(void)
 void anomaly_detection_on_event(const event_t* event, void* user_data)
 {
     ARG_UNUSED(user_data);
-    if (event == NULL || g_ad.status != MODULE_STATUS_RUNNING) {
-        return;
-    }
-
-    if (event->type == EVENT_TYPE_SENSOR_DATA && event->data_len == sizeof(gateway_sensor_data_t)) {
-        const gateway_sensor_data_t* sensor = (const gateway_sensor_data_t*)gateway_event_data(event);
-        if (sensor != NULL) {
-            anomaly_on_sensor_data(sensor);
-        }
-    }
+    ARG_UNUSED(event);
+    /* sensor 数据已迁移到 data_bus；当前模块不订阅任何 event_system 事件 */
 }
 
 module_status_t anomaly_detection_get_status(void)

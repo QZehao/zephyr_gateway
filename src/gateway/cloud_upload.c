@@ -152,13 +152,6 @@ void cloud_upload_on_event(const event_t *event, void *user_data)
 
     switch (event->type)
     {
-    case EVENT_TYPE_SENSOR_DATA:
-        if (event->data_len == sizeof(gateway_sensor_data_t))
-        {
-            cloud_on_sensor_data((const gateway_sensor_data_t *)gateway_event_data(event));
-        }
-        break;
-
     case EVENT_TYPE_ANOMALY_WARNING:
     case EVENT_TYPE_ANOMALY_CRITICAL:
     case EVENT_TYPE_ANOMALY_EMERGENCY:

@@ -51,11 +51,9 @@ typedef struct
 } gateway_subscription_t;
 
 static const gateway_subscription_t g_subscriptions[] = {
-	/* anomaly_detection 订阅 sensor 数据 */
-	{"anomaly_detection", EVENT_TYPE_SENSOR_DATA},
+	/* sensor 数据已迁移到 data_bus，不再走 event_system */
 
-	/* cloud_upload 订阅 sensor、anomaly */
-	{"cloud_upload", EVENT_TYPE_SENSOR_DATA},
+	/* cloud_upload 订阅 anomaly */
 	{"cloud_upload", EVENT_TYPE_ANOMALY_WARNING},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_CRITICAL},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_EMERGENCY},
@@ -86,9 +84,6 @@ static int gateway_init(void)
 	LOG_INF("  Version: %d.%d.%d", GATEWAY_VERSION_MAJOR,
 			GATEWAY_VERSION_MINOR, GATEWAY_VERSION_PATCH);
 	LOG_INF("========================================");
-
-	/* 注册网关事件类型（未被各模块 init 自动注册的部分） */
-	event_register_type(EVENT_TYPE_SENSOR_DATA, "sensor_data");
 
 	/* 设置模块间事件订阅 */
 	int ret = gateway_setup_subscriptions();

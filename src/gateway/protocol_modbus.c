@@ -107,8 +107,6 @@ int protocol_modbus_init(void* config)
     k_sem_init(&g_modbus.rx_sem, 0, 1);
     k_mutex_init(&g_modbus.tx_mutex);
 
-    event_register_type(EVENT_TYPE_MODBUS_DATA, "modbus_data");
-
     LOG_INF("Modbus 模块初始化完成");
     return 0;
 }
@@ -424,7 +422,6 @@ static void modbus_worker_thread(void* p1, void* p2, void* p3)
             g_modbus.poll_reg_count, values);
 
         if (ret == 0) {
-            /* 发布传感器数据 — Phase 2 双发 */
             for (uint16_t i = 0; i < g_modbus.poll_reg_count && i < 16; i++) {
                 gateway_sensor_data_t sensor = {
                     .timestamp = k_uptime_get_32(),
@@ -433,12 +430,9 @@ static void modbus_worker_thread(void* p1, void* p2, void* p3)
                     .value = (float)values[i] * 0.01f,
                     .raw_u16 = values[i],
                 };
-                event_publish_copy(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_NORMAL,
-                                   &sensor, sizeof(sensor));
                 (void)gateway_sensor_publish(&sensor);
             }
 
-            /* 发布原始 Modbus 数据 — Phase 2 双发 */
             gateway_modbus_data_t mb_data = {
                 .timestamp = k_uptime_get_32(),
                 .slave_id = g_modbus.slave_id,
@@ -448,8 +442,6 @@ static void modbus_worker_thread(void* p1, void* p2, void* p3)
             for (uint16_t i = 0; i < g_modbus.poll_reg_count && i < 16; i++) {
                 mb_data.values[i] = values[i];
             }
-            event_publish_copy(EVENT_TYPE_MODBUS_DATA, EVENT_PRIORITY_NORMAL,
-                               &mb_data, sizeof(mb_data));
             (void)gateway_modbus_raw_publish(&mb_data);
         }
 

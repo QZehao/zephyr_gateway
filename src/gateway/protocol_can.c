@@ -76,9 +76,6 @@ int protocol_can_init(void* config)
     g_can.status = MODULE_STATUS_INITIALIZED;
     g_can.filter_id = -1;
 
-    /* 注册网关事件类型 */
-    event_register_type(EVENT_TYPE_CAN_RX_DATA, "can_rx_data");
-
     LOG_INF("CAN 模块初始化完成");
     return 0;
 }
@@ -287,23 +284,19 @@ static void can_rx_thread(void* p1, void* p2, void* p3)
             gateway_sensor_data_t sensor = {
                 .timestamp = k_uptime_get_32(),
                 .channel_id = (uint8_t)(frame.id & 0x0F),
-                .sensor_type = SENSOR_TYPE_CURRENT, /* 根据 ID 映射 */
+                .sensor_type = SENSOR_TYPE_CURRENT,
                 .value = 0.0f,
                 .raw_u16 = 0,
             };
 
-            /* 简单解析: data[0-1] = raw_u16, 后续字节根据协议定义 */
             if (frame.dlc >= 2) {
                 sensor.raw_u16 = (uint16_t)(frame.data[0] | (frame.data[1] << 8));
-                sensor.value = (float)sensor.raw_u16 * 0.01f; /* 缩放因子示例 */
+                sensor.value = (float)sensor.raw_u16 * 0.01f;
             }
 
-            /* Phase 2 双发：event + bus */
-            event_publish_copy(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_NORMAL,
-                               &sensor, sizeof(sensor));
             (void)gateway_sensor_publish(&sensor);
 
-            /* 同时发布原始 CAN 帧 */
+            /* 原始 CAN 帧（无消费者，预留 trace） */
             gateway_can_frame_t can_evt = {
                 .timestamp = sensor.timestamp,
                 .id = frame.id,
@@ -312,8 +305,6 @@ static void can_rx_thread(void* p1, void* p2, void* p3)
                 .ext_id = (frame.flags & CAN_FRAME_IDE) != 0,
             };
             memcpy(can_evt.data, frame.data, frame.dlc);
-            event_publish_copy(EVENT_TYPE_CAN_RX_DATA, EVENT_PRIORITY_NORMAL,
-                               &can_evt, sizeof(can_evt));
             (void)gateway_can_raw_publish(&can_evt);
 
             LOG_DBG("CAN RX: id=0x%x dlc=%u val=%.2f", frame.id, frame.dlc,
