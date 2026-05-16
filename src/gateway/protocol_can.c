@@ -298,9 +298,10 @@ static void can_rx_thread(void* p1, void* p2, void* p3)
                 sensor.value = (float)sensor.raw_u16 * 0.01f; /* 缩放因子示例 */
             }
 
-            /* 发布传感器数据事件 */
+            /* Phase 2 双发：event + bus */
             event_publish_copy(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_NORMAL,
                                &sensor, sizeof(sensor));
+            (void)gateway_sensor_publish(&sensor);
 
             /* 同时发布原始 CAN 帧 */
             gateway_can_frame_t can_evt = {
@@ -313,6 +314,7 @@ static void can_rx_thread(void* p1, void* p2, void* p3)
             memcpy(can_evt.data, frame.data, frame.dlc);
             event_publish_copy(EVENT_TYPE_CAN_RX_DATA, EVENT_PRIORITY_NORMAL,
                                &can_evt, sizeof(can_evt));
+            (void)gateway_can_raw_publish(&can_evt);
 
             LOG_DBG("CAN RX: id=0x%x dlc=%u val=%.2f", frame.id, frame.dlc,
                     (double)sensor.value);

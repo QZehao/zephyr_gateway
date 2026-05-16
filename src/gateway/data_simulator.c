@@ -308,10 +308,17 @@ static void publish_sensor_data(uint8_t sensor_type, float value)
         .raw_u16 = 0,
     };
 
-    event_status_t ret = event_publish_copy(EVENT_TYPE_SENSOR_DATA, EVENT_PRIORITY_NORMAL,
-                                             &data, sizeof(data));
-    if (ret != EVENT_OK) {
-        LOG_WRN("发布模拟数据失败: %d", ret);
+    /* Phase 2 双发：event_system（旧路径）+ data_bus（新路径） */
+    event_status_t ev_ret = event_publish_copy(EVENT_TYPE_SENSOR_DATA,
+                                                EVENT_PRIORITY_NORMAL,
+                                                &data, sizeof(data));
+    if (ev_ret != EVENT_OK) {
+        LOG_WRN("发布模拟数据 (event) 失败: %d", ev_ret);
+    }
+
+    int bus_ret = gateway_sensor_publish(&data);
+    if (bus_ret != 0) {
+        LOG_WRN("发布模拟数据 (bus) 失败: %d", bus_ret);
     }
 }
 
