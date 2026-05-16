@@ -59,6 +59,7 @@ typedef struct {
     /* 状态 */
     eth_state_t          state;
     bool                 net_up;
+    bool                 pending_disconnect;
     /* 重连 */
     uint32_t             reconnect_delay_ms;
     int64_t              last_connect_attempt;
@@ -108,6 +109,7 @@ int protocol_eth_init(void* config)
     g_eth.status = MODULE_STATUS_INITIALIZED;
     g_eth.state = ETH_STATE_DISCONNECTED;
     g_eth.reconnect_delay_ms = RECONNECT_MIN_MS;
+    g_eth.pending_disconnect = false;
 
     k_mutex_init(&g_eth.client_mutex);
 
@@ -128,6 +130,7 @@ int protocol_eth_start(void)
     g_eth.status = MODULE_STATUS_RUNNING;
     g_eth.net_up = false;
     g_eth.state = ETH_STATE_DISCONNECTED;
+    g_eth.pending_disconnect = false;
 
     k_thread_create(
         &g_eth.worker_thread, g_eth.worker_stack,
@@ -288,6 +291,12 @@ static void eth_worker_thread(void* p1, void* p2, void* p3)
     LOG_INF("Ethernet 工作线程已启动");
 
     while (g_eth.status == MODULE_STATUS_RUNNING) {
+        /* 处理回调请求的断开 */
+        if (g_eth.pending_disconnect) {
+            g_eth.pending_disconnect = false;
+            eth_mqtt_disconnect();
+        }
+
         /* 检查网络接口状态 */
         struct net_if* iface = net_if_get_default();
         bool net_was_up = g_eth.net_up;
@@ -302,6 +311,7 @@ static void eth_worker_thread(void* p1, void* p2, void* p3)
             if (g_eth.state != ETH_STATE_DISCONNECTED) {
                 eth_mqtt_disconnect();
             }
+            g_eth.pending_disconnect = false;
             k_sleep(K_MSEC(1000));
             continue;
         }
@@ -400,6 +410,7 @@ static int eth_mqtt_connect(void)
 
 static void eth_mqtt_disconnect(void)
 {
+    k_mutex_lock(&g_eth.client_mutex, K_FOREVER);
     if (g_eth.state != ETH_STATE_DISCONNECTED) {
         mqtt_disconnect(&g_eth.client, NULL);
         g_eth.state = ETH_STATE_DISCONNECTED;
@@ -407,6 +418,7 @@ static void eth_mqtt_disconnect(void)
         eth_publish_state_event(false);
         LOG_INF("MQTT 已断开");
     }
+    k_mutex_unlock(&g_eth.client_mutex);
 }
 
 static void eth_publish_state_event(bool connected)
@@ -427,7 +439,7 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
     case MQTT_EVT_CONNACK:
         if (evt->result != 0) {
             LOG_ERR("MQTT CONNACK 错误: %d", evt->result);
-            eth_mqtt_disconnect();
+            g_eth.pending_disconnect = true;
             break;
         }
         g_eth.state = ETH_STATE_CONNECTED;
@@ -450,7 +462,7 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
         ret = mqtt_subscribe(client, &sub_list);
         if (ret != 0) {
             LOG_WRN("MQTT 订阅失败: %d", ret);
-            eth_mqtt_disconnect();
+            g_eth.pending_disconnect = true;
             break;
         }
         g_eth.state = ETH_STATE_SUBSCRIBED;
