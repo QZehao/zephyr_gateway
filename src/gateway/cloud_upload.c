@@ -19,6 +19,7 @@
 
 #include "event_system.h"
 #include "module_manager.h"
+#include "data_bus.h"
 
 LOG_MODULE_REGISTER(cloud_upload, CONFIG_SYS_LOG_LEVEL);
 
@@ -53,6 +54,9 @@ typedef struct
 
 static cloud_upload_cb_t g_cloud;
 
+/* data_bus consumer 句柄 */
+static data_bus_consumer_t* g_cloud_sensor_consumer = NULL;
+
 /* =============================================================================
  * 前向声明
  * ============================================================================= */
@@ -60,6 +64,9 @@ static cloud_upload_cb_t g_cloud;
 static void cloud_on_sensor_data(const gateway_sensor_data_t *sensor);
 static void cloud_on_anomaly(const gateway_anomaly_event_t *evt);
 static void cloud_handle_offline(uint8_t data_type, const char *json);
+static void cloud_sensor_data_cb(data_bus_channel_t* ch,
+                                  data_bus_block_t* block,
+                                  void* user_data);
 
 /* =============================================================================
  * 模块接口实现
@@ -87,6 +94,23 @@ int cloud_upload_start(void)
     {
         return -1;
     }
+
+    /* 注册到 data_bus sensor 通道 */
+    if (g_sensor_channel != NULL && g_cloud_sensor_consumer == NULL) {
+        data_bus_consumer_cfg_t cfg = {
+            .name      = "cloud_upload",
+            .callback  = cloud_sensor_data_cb,
+        };
+        int ret = data_bus_consumer_register(g_sensor_channel, &cfg,
+                                              &g_cloud_sensor_consumer);
+        if (ret != 0) {
+            LOG_ERR("注册 sensor consumer 失败: %d", ret);
+            g_cloud_sensor_consumer = NULL;
+        } else {
+            LOG_INF("cloud_upload 已订阅 data_bus 'sensor'");
+        }
+    }
+
     g_cloud.status = MODULE_STATUS_RUNNING;
     g_cloud.last_upload_ms = k_uptime_get_32();
     LOG_INF("云上传模块已启动");
@@ -99,6 +123,13 @@ int cloud_upload_stop(void)
     {
         return 0;
     }
+
+    if (g_cloud_sensor_consumer != NULL) {
+        data_bus_consumer_unregister(g_cloud_sensor_consumer);
+        g_cloud_sensor_consumer = NULL;
+        LOG_INF("cloud_upload 已注销 data_bus consumer");
+    }
+
     g_cloud.status = MODULE_STATUS_STOPPED;
     LOG_INF("云上传模块已停止");
     return 0;
@@ -264,6 +295,32 @@ static void cloud_handle_offline(uint8_t data_type, const char *json)
                        &cache_data, sizeof(cache_data));
     g_cloud.cached_count++;
     LOG_INF("数据已转存离线缓存");
+}
+
+/* =============================================================================
+ * data_bus 消费者回调
+ * ============================================================================= */
+
+static void cloud_sensor_data_cb(data_bus_channel_t* ch,
+                                  data_bus_block_t* block,
+                                  void* user_data)
+{
+    ARG_UNUSED(ch);
+    ARG_UNUSED(user_data);
+
+    /* NOTE: data_bus_consumer_unregister() does not wait for in-flight
+     * dispatches (see framework/src/data_bus/data_bus_consumer.c).
+     * This status check is the only barrier preventing post-stop work
+     * from executing; do not remove. */
+    if (g_cloud.status != MODULE_STATUS_RUNNING) {
+        return;
+    }
+    if (block == NULL || block->ptr == NULL ||
+        block->len != sizeof(gateway_sensor_data_t)) {
+        return;
+    }
+
+    cloud_on_sensor_data((const gateway_sensor_data_t*)block->ptr);
 }
 
 /* =============================================================================

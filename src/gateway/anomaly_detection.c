@@ -20,6 +20,7 @@
 
 #include "event_system.h"
 #include "module_manager.h"
+#include "data_bus.h"
 
 LOG_MODULE_REGISTER(anomaly_detection, CONFIG_SYS_LOG_LEVEL);
 
@@ -83,6 +84,9 @@ typedef struct {
 
 static anomaly_detection_cb_t g_ad;
 
+/* data_bus consumer 句柄（_start 注册，_stop 注销） */
+static data_bus_consumer_t* g_anomaly_sensor_consumer = NULL;
+
 /* =============================================================================
  * 前向声明
  * ============================================================================= */
@@ -94,6 +98,9 @@ static uint8_t anomaly_detect(sensor_window_t* win, float value,
 static void anomaly_publish_event(uint8_t level, const gateway_sensor_data_t* sensor,
                                    float mean, float stddev, float sigma);
 static void anomaly_check_multi_dim(void);
+static void anomaly_sensor_data_cb(data_bus_channel_t* ch,
+                                    data_bus_block_t* block,
+                                    void* user_data);
 
 /* =============================================================================
  * 模块接口实现
@@ -134,6 +141,25 @@ int anomaly_detection_start(void)
     if (g_ad.status != MODULE_STATUS_INITIALIZED && g_ad.status != MODULE_STATUS_STOPPED) {
         return -1;
     }
+
+    /* 注册到 data_bus sensor 通道 */
+    if (g_sensor_channel != NULL && g_anomaly_sensor_consumer == NULL) {
+        data_bus_consumer_cfg_t cfg = {
+            .name       = "anomaly_detection",
+            .callback   = anomaly_sensor_data_cb,
+            /* manual_release = false：回调返回后框架自动 release */
+        };
+        int ret = data_bus_consumer_register(g_sensor_channel, &cfg,
+                                              &g_anomaly_sensor_consumer);
+        if (ret != 0) {
+            LOG_ERR("注册 sensor consumer 失败: %d", ret);
+            g_anomaly_sensor_consumer = NULL;
+            /* 继续启动：on_event 路径仍可用作 fallback */
+        } else {
+            LOG_INF("anomaly_detection 已订阅 data_bus 'sensor'");
+        }
+    }
+
     g_ad.status = MODULE_STATUS_RUNNING;
     LOG_INF("异常检测模块已启动");
     return 0;
@@ -144,6 +170,14 @@ int anomaly_detection_stop(void)
     if (g_ad.status != MODULE_STATUS_RUNNING) {
         return 0;
     }
+
+    /* 注销 bus consumer */
+    if (g_anomaly_sensor_consumer != NULL) {
+        data_bus_consumer_unregister(g_anomaly_sensor_consumer);
+        g_anomaly_sensor_consumer = NULL;
+        LOG_INF("anomaly_detection 已注销 data_bus consumer");
+    }
+
     g_ad.status = MODULE_STATUS_STOPPED;
     LOG_INF("异常检测模块已停止");
     return 0;
@@ -423,6 +457,32 @@ static void anomaly_check_multi_dim(void)
             /* 可在此发布联动告警事件，如需要 */
         }
     }
+}
+
+/* =============================================================================
+ * data_bus 消费者回调
+ * ============================================================================= */
+
+static void anomaly_sensor_data_cb(data_bus_channel_t* ch,
+                                    data_bus_block_t* block,
+                                    void* user_data)
+{
+    ARG_UNUSED(ch);
+    ARG_UNUSED(user_data);
+
+    /* NOTE: data_bus_consumer_unregister() does not wait for in-flight
+     * dispatches (see framework/src/data_bus/data_bus_consumer.c).
+     * This status check is the only barrier preventing post-stop work
+     * from executing; do not remove. */
+    if (g_ad.status != MODULE_STATUS_RUNNING) {
+        return;
+    }
+    if (block == NULL || block->ptr == NULL ||
+        block->len != sizeof(gateway_sensor_data_t)) {
+        return;
+    }
+
+    anomaly_on_sensor_data((const gateway_sensor_data_t*)block->ptr);
 }
 
 /* =============================================================================
