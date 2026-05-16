@@ -148,6 +148,9 @@ extern "C" {
  * SYS_INIT 优先级（在 framework 已有优先级之后）
  * ============================================================================= */
 
+/* APPLICATION 阶段：通道创建（在所有 POST_KERNEL 模块自动注册之后、gateway_init 之前） */
+#define GATEWAY_INIT_PRIO_CHANNELS        68
+
 #define GATEWAY_INIT_PRIO_SIMULATOR       69
 #define GATEWAY_INIT_PRIO_PROTOCOL_CAN    70
 #define GATEWAY_INIT_PRIO_PROTOCOL_MODBUS 71

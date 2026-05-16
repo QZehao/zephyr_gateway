@@ -129,6 +129,28 @@ const char* gateway_sensor_type_str(uint8_t sensor_type);
 /** 将异常级别转为可读字符串 */
 const char* gateway_anomaly_level_str(uint8_t level);
 
+/* =============================================================================
+ * Data Bus 通道与 Publish Helper
+ * ============================================================================= */
+
+#include "data_bus.h"
+
+/** 全局通道句柄；由 gateway_events.c 在 SYS_INIT(APPLICATION, 68) 阶段创建。
+ *  若 data_bus 初始化失败或通道池耗尽，对应句柄保持 NULL，helper 返回 -ENODEV。 */
+extern data_bus_channel_t* g_sensor_channel;     /* payload: gateway_sensor_data_t */
+extern data_bus_channel_t* g_can_raw_channel;    /* payload: gateway_can_frame_t */
+extern data_bus_channel_t* g_modbus_raw_channel; /* payload: gateway_modbus_data_t */
+
+/** 发布传感器数据点（统一格式，data_simulator / protocol_can / protocol_modbus 共用）。
+ *  返回 0 成功；-ENODEV 通道未创建；-ENOMEM slab 耗尽；-ENOBUFS 队列满；-EINVAL 参数非法。 */
+int gateway_sensor_publish(const gateway_sensor_data_t* data);
+
+/** 发布 CAN 原始帧（当前无消费者，预留 trace/debug 通道）。 */
+int gateway_can_raw_publish(const gateway_can_frame_t* frame);
+
+/** 发布 Modbus 原始寄存器数据（当前无消费者，预留 trace/debug 通道）。 */
+int gateway_modbus_raw_publish(const gateway_modbus_data_t* mb);
+
 #ifdef __cplusplus
 }
 #endif

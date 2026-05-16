@@ -5,6 +5,7 @@ zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../framework/src/modules
 zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../framework/src/core)
 zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../framework/src/services)
 zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../framework/src/app)
+zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../framework/src/data_bus)
 
 zephyr_library_sources_ifdef(
   CONFIG_ZEPHYR_GATEWAY_BUSINESS
