@@ -43,7 +43,7 @@
 |  |    └─ gateway_init.c        模块注册 + 事件订阅总控     |  |
 |  |                                                       |  |
 |  |  公共定义                                               |  |
-|  |    ├─ gateway_events.h/c    事件类型 + data_bus 通道初始化与发布 helper |  |
+|  |    ├─ gateway_events.h/c    事件类型/通道初始化 helper  |  |
 |  |    └─ gateway_config.h      模块公共配置宏             |  |
 |  +-------------------------------------------------------+  |
 |                             |                               |
