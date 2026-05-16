@@ -383,16 +383,6 @@ static int cmd_sim_start(const struct shell* sh, size_t argc, char** argv)
         return 0;
     }
 
-    /* 可选参数：采样周期，如 sim start 500 */
-    if (argc > 1) {
-        int err = 0;
-        unsigned long ms = shell_strtoul(argv[1], 0, &err);
-        if (err == 0 && ms > 0 && ms <= 60000) {
-            uint32_t interval = (uint32_t)ms;
-            data_simulator_control(SIM_CMD_SET_INTERVAL, &interval);
-        }
-    }
-
     int ret = module_manager_start_module(module_id);
     if (ret == 0) {
         shell_print(sh, "数据模拟模块已启动 (interval=%ums)", g_sim.sample_interval_ms);

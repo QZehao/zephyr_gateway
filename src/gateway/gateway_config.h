@@ -104,6 +104,7 @@ extern "C" {
 #define GATEWAY_CAN_FILTER_ID_DEFAULT     0x100
 #define GATEWAY_CAN_FILTER_MASK_DEFAULT   0x7F0
 #define GATEWAY_CAN_RX_BUF_SIZE           32
+#define GATEWAY_CAN_CHANNEL_ID_MASK       0x0F  /* CAN ID 低4位作为 channel_id */
 
 /* Modbus */
 #define GATEWAY_MODBUS_BAUDRATE_DEFAULT   9600
@@ -140,9 +141,16 @@ extern "C" {
  * 版本号
  * ============================================================================= */
 
+/* 版本号：构建系统提供 PROJECT_VERSION_* 时自动同步，否则回退到 1.0.0 */
+#ifdef PROJECT_VERSION_MAJOR
+#define GATEWAY_VERSION_MAJOR PROJECT_VERSION_MAJOR
+#define GATEWAY_VERSION_MINOR PROJECT_VERSION_MINOR
+#define GATEWAY_VERSION_PATCH PROJECT_VERSION_PATCH
+#else
 #define GATEWAY_VERSION_MAJOR 1
 #define GATEWAY_VERSION_MINOR 0
 #define GATEWAY_VERSION_PATCH 0
+#endif
 
 /* =============================================================================
  * SYS_INIT 优先级（在 framework 已有优先级之后）

@@ -424,6 +424,7 @@ static void modbus_worker_thread(void* p1, void* p2, void* p3)
 
         if (ret == 0) {
             for (uint16_t i = 0; i < g_modbus.poll_reg_count && i < 16; i++) {
+                /* TODO: sensor_type 应按寄存器地址配置映射，而非循环取模 */
                 gateway_sensor_data_t sensor = {
                     .timestamp = k_uptime_get_32(),
                     .channel_id = g_modbus.slave_id,

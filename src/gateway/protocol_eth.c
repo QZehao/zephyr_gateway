@@ -271,14 +271,8 @@ int protocol_eth_mqtt_set_broker(const char* addr, uint16_t port)
         return -EINVAL;
     }
 
-    /* TODO: 当前 broker 地址通过 Kconfig 编译时固定，
-     * 运行时修改需要重新解析地址并重连。
-     * 简单实现：断开当前连接，让工作线程自动重连到新地址。
-     * 实际修改 CONFIG 值需通过其他机制（如全局变量）。
-     */
-    LOG_INF("MQTT Broker 设置请求: %s:%u（需重连生效）", addr, port);
-    eth_mqtt_disconnect();
-    return 0;
+    LOG_WRN("MQTT Broker 运行时设置尚未实现 (requested: %s:%u)", addr, port);
+    return -ENOTSUP;
 }
 
 /* =============================================================================

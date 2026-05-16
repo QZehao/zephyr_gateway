@@ -284,7 +284,7 @@ static void can_rx_thread(void* p1, void* p2, void* p3)
             /* 解析 CAN 帧为传感器数据 */
             gateway_sensor_data_t sensor = {
                 .timestamp = k_uptime_get_32(),
-                .channel_id = (uint8_t)(frame.id & 0x0F),
+                .channel_id = (uint8_t)(frame.id & GATEWAY_CAN_CHANNEL_ID_MASK),
                 .sensor_type = SENSOR_TYPE_CURRENT,
                 .value = 0.0f,
                 .raw_u16 = 0,

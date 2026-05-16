@@ -39,6 +39,7 @@ BUILD_ASSERT(MAX_SENSOR_TYPES >= SENSOR_TYPE_COUNT,
 #define ANOMALY_LEVEL_WARNING   1
 #define ANOMALY_LEVEL_CRITICAL  2
 #define ANOMALY_LEVEL_EMERGENCY 3
+#define ANOMALY_STDDEV_MIN_VALID 0.001f
 
 /* =============================================================================
  * 内部数据结构
@@ -334,7 +335,7 @@ static uint8_t anomaly_detect(sensor_window_t* win, float value,
                                uint8_t sensor_type, float* out_sigma)
 {
     /* 窗口未满时不检测 */
-    if (!win->valid || win->stddev < 0.001f) {
+    if (!win->valid || win->stddev < ANOMALY_STDDEV_MIN_VALID) {
         *out_sigma = 0.0f;
         return ANOMALY_LEVEL_NONE;
     }
