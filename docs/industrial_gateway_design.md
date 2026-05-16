@@ -43,7 +43,7 @@
 |  |    └─ gateway_init.c        模块注册 + 事件订阅总控     |  |
 |  |                                                       |  |
 |  |  公共定义                                               |  |
-|  |    ├─ gateway_events.h      事件类型枚举               |  |
+|  |    ├─ gateway_events.h/c    事件类型 + data_bus 通道初始化与发布 helper |  |
 |  |    └─ gateway_config.h      模块公共配置宏             |  |
 |  +-------------------------------------------------------+  |
 |                             |                               |
@@ -90,9 +90,9 @@
 ```c
 /* gateway_events.h — 与源码保持一致 */
 
-/* 传感器/原始帧高频数据流已迁移到 data_bus 通道（详见 §2.5），
- * gateway_events.h 中不再定义 EVENT_TYPE_CAN_RX_DATA / EVENT_TYPE_MODBUS_DATA。
- * framework 仍保留 EVENT_TYPE_SENSOR_DATA = 10，但 src/gateway 路径不再发布该事件。 */
+/* 传感器与原始帧高频数据通过 data_bus 通道分发（详见 §2.3），不在
+ * gateway_events.h 中定义事件类型。
+ * framework 定义 EVENT_TYPE_SENSOR_DATA = 10，但 src/gateway 不发布该事件。 */
 
 /* 异常检测输出 */
 #define EVENT_TYPE_ANOMALY_WARNING  110   /* |x-μ|/σ ≥ warning_sigma（默认 2.0） */
@@ -322,7 +322,7 @@ CONFIG_GATEWAY_ANOMALY_EMERGENCY_SIGMA=40 /* 4.0 */
 
 ### 3.5 cloud_upload — 数据上云
 
-**职责**：订阅传感器数据和异常事件，格式化为 JSON，通过 `cloud_provider_publish_all()` 向所有已注册 Provider 分发。断网时将数据发布 `EVENT_TYPE_CLOUD_UPLOAD` 供 offline_cache 存储。
+**职责**：通过 `data_bus` 通道 "sensor" 消费传感器数据，通过 `event_system` 订阅 `EVENT_TYPE_ANOMALY_*` 异常事件；格式化为 JSON，通过 `cloud_provider_publish_all()` 向所有已注册 Provider 分发。断网时将数据发布 `EVENT_TYPE_CLOUD_UPLOAD` 供 offline_cache 存储。
 
 **JSON 格式（轻量）**：
 ```json
