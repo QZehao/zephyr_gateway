@@ -63,8 +63,6 @@ typedef struct {
     uint32_t        overflow_count;
     /* 同步 */
     struct k_mutex  lock;
-    /* 内存回退缓冲区（NVS 不可用时使用） */
-    uint8_t         mem_buf[CACHE_MAX_ENTRIES][CACHE_ENTRY_SIZE];
 } offline_cache_cb_t;
 
 /* =============================================================================
@@ -100,12 +98,12 @@ int offline_cache_init(void* config)
 
     int ret = cache_nvs_init();
     if (ret != 0) {
-        LOG_WRN("NVS 初始化失败 (%d)，离线缓存将使用内存模式", ret);
-    } else {
-        cache_load_state();
-        LOG_INF("NVS 离线缓存已恢复: head=%u tail=%u count=%u",
-                g_cache.head, g_cache.tail, g_cache.count);
+        LOG_ERR("NVS 初始化失败 (%d)，离线缓存模块无法启动", ret);
+        return ret;
     }
+    cache_load_state();
+    LOG_INF("NVS 离线缓存已恢复: head=%u tail=%u count=%u",
+            g_cache.head, g_cache.tail, g_cache.count);
 
     LOG_INF("离线缓存模块初始化完成");
     return 0;
@@ -282,21 +280,7 @@ static void cache_on_net_state(bool connected)
 static int cache_write_entry(const char* json_data, uint8_t data_type)
 {
     if (g_cache.fs.flash_device == NULL) {
-        /* 内存模式：保存到内存环形缓冲区 */
-        uint16_t idx = g_cache.head;
-        cache_entry_t* entry = (cache_entry_t*)&g_cache.mem_buf[idx];
-        entry->timestamp = k_uptime_get_32();
-        entry->data_type = data_type;
-        strncpy(entry->data, json_data, sizeof(entry->data) - 1);
-        entry->data[sizeof(entry->data) - 1] = '\0';
-
-        if (g_cache.count >= CACHE_MAX_ENTRIES) {
-            g_cache.tail = (g_cache.tail + 1) % CACHE_MAX_ENTRIES;
-        } else {
-            g_cache.count++;
-        }
-        g_cache.head = (g_cache.head + 1) % CACHE_MAX_ENTRIES;
-        return 0;
+        return -ENODEV;
     }
 
     uint16_t nvs_id = CACHE_NVS_ID_START + g_cache.head;
@@ -332,30 +316,24 @@ static int cache_read_entry(char* out_data, size_t out_size, uint8_t* out_data_t
         return -1;
     }
 
-    if (g_cache.fs.flash_device != NULL) {
-        uint16_t nvs_id = CACHE_NVS_ID_START + g_cache.tail;
-        cache_entry_t entry;
-        size_t len = sizeof(entry);
-
-        int ret = nvs_read(&g_cache.fs, nvs_id, &entry, len);
-        if (ret < 0) {
-            return ret;
-        }
-
-        if (out_data_type != NULL) {
-            *out_data_type = entry.data_type;
-        }
-        strncpy(out_data, entry.data, out_size - 1);
-        out_data[out_size - 1] = '\0';
-    } else {
-        /* 内存模式：从内存缓冲区读取 */
-        cache_entry_t* entry = (cache_entry_t*)&g_cache.mem_buf[g_cache.tail];
-        if (out_data_type != NULL) {
-            *out_data_type = entry->data_type;
-        }
-        strncpy(out_data, entry->data, out_size - 1);
-        out_data[out_size - 1] = '\0';
+    if (g_cache.fs.flash_device == NULL) {
+        return -ENODEV;
     }
+
+    uint16_t nvs_id = CACHE_NVS_ID_START + g_cache.tail;
+    cache_entry_t entry;
+    size_t len = sizeof(entry);
+
+    int ret = nvs_read(&g_cache.fs, nvs_id, &entry, len);
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (out_data_type != NULL) {
+        *out_data_type = entry.data_type;
+    }
+    strncpy(out_data, entry.data, out_size - 1);
+    out_data[out_size - 1] = '\0';
 
     g_cache.tail = (g_cache.tail + 1) % CACHE_MAX_ENTRIES;
     g_cache.count--;
