@@ -3,7 +3,7 @@
  * @brief 自适应阈值异常检测模块实现
  *
  * 滑动窗口统计（均值 + 标准差），三级阈值检测，多维度联动。
- * 订阅 EVENT_TYPE_SENSOR_DATA，发布 EVENT_TYPE_ANOMALY_*。
+ * 通过 data_bus 通道 "sensor" 消费传感器数据，发布 EVENT_TYPE_ANOMALY_* 到 event_system。
  */
 
 #include "anomaly_detection.h"

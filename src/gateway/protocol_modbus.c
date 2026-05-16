@@ -2,8 +2,9 @@
  * @file protocol_modbus.c
  * @brief Modbus RTU Master 模块实现
  *
- * 通过 UART/RS-485 周期性轮询 Modbus 从站，读取保持寄存器，
- * 解析为传感器数据格式，发布 EVENT_TYPE_SENSOR_DATA。
+ * 通过 UART/RS-485 周期性轮询 Modbus 从站，读取保持寄存器，解析为传感器数据格式，
+ * 通过 `gateway_sensor_publish()` 发布到 data_bus 通道 "sensor"，
+ * 原始寄存器块另通过 `gateway_modbus_raw_publish()` 发布到 "modbus_raw"。
  */
 
 #include "protocol_modbus.h"

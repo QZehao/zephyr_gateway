@@ -3,7 +3,8 @@
  * @brief CAN 总线数据采集模块实现
  *
  * 通过 Zephyr CAN API 接收工业传感器数据帧，解析为标准传感器格式，
- * 通过事件系统发布 EVENT_TYPE_SENSOR_DATA。
+ * 通过 `gateway_sensor_publish()` 发布到 data_bus 通道 "sensor"，
+ * 原始帧另通过 `gateway_can_raw_publish()` 发布到 "can_raw"。
  */
 
 #include "protocol_can.h"

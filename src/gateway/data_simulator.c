@@ -3,7 +3,7 @@
  * @brief 数据模拟生成采集模块实现
  *
  * 按配置的基线和波动范围生成随机传感器数据，
- * 通过事件系统发布 EVENT_TYPE_SENSOR_DATA，用于功能测试。
+ * 通过 data_bus 通道 "sensor" 发布（`gateway_sensor_publish()`），用于功能测试。
  */
 
 #include "data_simulator.h"

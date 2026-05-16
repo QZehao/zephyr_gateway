@@ -33,29 +33,37 @@ src/gateway/
 
 ### 事件流
 
+> sensor 数据流（含 CAN/Modbus 原始帧）已迁移到 `data_bus`（详见
+> `docs/industrial_gateway_design.md`）；event_system 仅承载告警与
+> 网络状态等低频事件。
+
 ```
-CAN/Modbus 数据 ──EVENT_TYPE_SENSOR_DATA──┐
-                                           ├──> anomaly_detection
-                                           │          │
-                                           │          ├──EVENT_TYPE_ANOMALY_*──> cloud_upload
-                                           │                                   │
-                                           │                                   ├──(JSON格式化 + 速率控制)
-                                           │                                   │
-                                           │                                   └──> cloud_provider_publish_all()
-                                           │                                               │
-                                           │                   ┌───────────────────────────┼───────────────────────────┐
-                                           │                   ↓                           ↓                           ↓
-                                           │            cloud_private              cloud_aliyun              cloud_tencent
-                                           │                   │                           │                           │
-                                           │                   └──> protocol_eth     protocol_eth            protocol_eth
-                                           │
-                                           └──────────────────────────────────────────────────────────────────────────────┤
-                                                                                                                              │
-                                                                           (任一 Provider 失败) ──> cloud_handle_offline() ──> offline_cache
-                                                                                                                              │
-                                                                                                                              │(网络恢复)
-                                                                                                                              └──> EVENT_TYPE_CLOUD_UPLOAD ──> cloud_upload (重发)
+data_simulator / protocol_can / protocol_modbus
+        │
+        │ gateway_sensor_publish()
+        ▼
+data_bus 通道 "sensor" ──┬──> anomaly_detection
+                          │          │
+                          │          ├──EVENT_TYPE_ANOMALY_*──> cloud_upload
+                          │                                   │
+                          │                                   ├──(JSON格式化 + 速率控制)
+                          │                                   │
+                          │                                   └──> cloud_provider_publish_all()
+                          │                                               │
+                          │                   ┌───────────────────────────┼───────────────────────────┐
+                          │                   ↓                           ↓                           ↓
+                          │            cloud_private              cloud_aliyun              cloud_tencent
+                          │                   │                           │                           │
+                          │                   └──> protocol_eth     protocol_eth            protocol_eth
+                          │
+                          └──> cloud_upload (旁路订阅)
+                                       │
+                          (任一 Provider 失败) ──> cloud_handle_offline() ──> offline_cache
+                                                                                  │
+                                                                                  │(网络恢复)
+                                                                                  └──> EVENT_TYPE_CLOUD_UPLOAD ──> cloud_upload (重发)
 ```
+
 
 ### 多云平台支持
 
