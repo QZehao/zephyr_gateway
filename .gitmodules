@@ -1,4 +1,4 @@
 [submodule "framework"]
 	path = framework
-	url = https://github.com/QZehao/zeplod.git
+	url = https://github.com/QZehao/Zeplod.git
 	branch = main
