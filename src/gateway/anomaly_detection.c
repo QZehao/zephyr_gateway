@@ -470,12 +470,13 @@ static void anomaly_sensor_data_cb(data_bus_channel_t* ch,
     if (g_ad.status != MODULE_STATUS_RUNNING) {
         return;
     }
-    if (block == NULL || block->ptr == NULL ||
-        block->len != sizeof(gateway_sensor_data_t)) {
+    void* payload = data_bus_block_ptr(block);
+    if (payload == NULL ||
+        data_bus_block_len(block) != sizeof(gateway_sensor_data_t)) {
         return;
     }
 
-    anomaly_on_sensor_data((const gateway_sensor_data_t*)block->ptr);
+    anomaly_on_sensor_data((const gateway_sensor_data_t*)payload);
 }
 
 /* =============================================================================
