@@ -142,15 +142,15 @@ int protocol_can_stop(void)
         return 0;
     }
 
-    /* 先通知线程退出，再停硬件 */
     g_can.status = MODULE_STATUS_STOPPED;
 
-    /* 停止 CAN */
+    k_thread_abort(&g_can.rx_thread);
+    k_thread_join(&g_can.rx_thread, K_FOREVER);
+
+    /* 停止 CAN 硬件（在 rx_thread 退出后执行，确保无并发访问） */
     if (g_can.dev != NULL) {
         can_stop(g_can.dev);
     }
-
-    k_thread_join(&g_can.rx_thread, K_MSEC(500));
 
     LOG_INF("CAN 模块已停止");
     return 0;

@@ -31,9 +31,39 @@ LOG_MODULE_REGISTER(offline_cache, CONFIG_SYS_LOG_LEVEL);
 #define CACHE_MAX_ENTRIES    GATEWAY_CACHE_MAX_ENTRIES
 #define CACHE_ENTRY_SIZE     GATEWAY_CACHE_ENTRY_SIZE
 #define CACHE_NVS_ID_START   64
-#define CACHE_COUNT_ID       61
-#define CACHE_HEAD_ID        62
-#define CACHE_TAIL_ID        63
+/* 原子状态 NVS ID：count/head/tail 合并为单一原子写入，防止掉电导致不一致 */
+#define CACHE_STATE_ID       61
+
+/* =============================================================================
+ * 原子状态结构（单次 NVS 写入保证一致性）
+ * ============================================================================= */
+
+typedef struct {
+    uint16_t count;
+    uint16_t head;
+    uint16_t tail;
+    uint16_t crc;   /* CRC-16/MODBUS of count+head+tail */
+} cache_state_t;
+
+_Static_assert(sizeof(cache_state_t) == 8, "cache_state_t must be 8 bytes");
+
+/* 计算 cache_state_t 前 4 字节的 CRC-16/MODBUS（排除自身 crc 字段） */
+static uint16_t cache_state_crc(uint16_t count, uint16_t head, uint16_t tail)
+{
+    uint16_t crc = 0xFFFF;
+    uint8_t data[6] = {
+        (uint8_t)(count >> 8), (uint8_t)(count & 0xFF),
+        (uint8_t)(head >> 8),  (uint8_t)(head & 0xFF),
+        (uint8_t)(tail >> 8),  (uint8_t)(tail & 0xFF),
+    };
+    for (size_t i = 0; i < sizeof(data); i++) {
+        crc ^= data[i];
+        for (int j = 0; j < 8; j++) {
+            crc = (crc & 1) ? ((crc >> 1) ^ 0xA001) : (crc >> 1);
+        }
+    }
+    return crc;
+}
 
 /* =============================================================================
  * 内部数据结构
@@ -63,6 +93,8 @@ typedef struct {
     uint32_t        overflow_count;
     /* 同步 */
     struct k_mutex  lock;
+    /* 批量上报工作项：网络恢复后持续排空缓存 */
+    struct k_work_delayable upload_work;
 } offline_cache_cb_t;
 
 /* =============================================================================
@@ -77,6 +109,7 @@ static offline_cache_cb_t g_cache;
 
 static void cache_on_cloud_upload(const gateway_cloud_data_t* data);
 static void cache_on_net_state(bool connected);
+static void cache_upload_work_handler(struct k_work* work);
 static int  cache_write_entry(const char* json_data, uint8_t data_type);
 static int  cache_read_entry(char* out_data, size_t out_size, uint8_t* out_data_type);
 static int  cache_nvs_init(void);
@@ -95,6 +128,7 @@ int offline_cache_init(void* config)
     memset(&g_cache, 0, sizeof(g_cache));
     g_cache.status = MODULE_STATUS_INITIALIZED;
     k_mutex_init(&g_cache.lock);
+    k_work_init_delayable(&g_cache.upload_work, cache_upload_work_handler);
 
     int ret = cache_nvs_init();
     if (ret != 0) {
@@ -126,6 +160,8 @@ int offline_cache_stop(void)
     if (g_cache.status != MODULE_STATUS_RUNNING) {
         return 0;
     }
+    /* 取消挂起的批量上报，避免模块停止后工作项仍执行 */
+    k_work_cancel_delayable(&g_cache.upload_work);
     cache_save_state();
     g_cache.status = MODULE_STATUS_STOPPED;
     LOG_INF("离线缓存模块已停止");
@@ -231,49 +267,64 @@ static void cache_on_cloud_upload(const gateway_cloud_data_t* data)
     k_mutex_unlock(&g_cache.lock);
 }
 
+static void cache_upload_work_handler(struct k_work* work)
+{
+    ARG_UNUSED(work);
+
+    if (g_cache.status != MODULE_STATUS_RUNNING || !g_cache.net_connected) {
+        return;
+    }
+
+    k_mutex_lock(&g_cache.lock, K_FOREVER);
+
+    uint16_t batch_count = 0;
+    char json[CACHE_ENTRY_SIZE];
+
+    while (g_cache.count > 0) {
+        uint8_t data_type = 0;
+        int ret = cache_read_entry(json, sizeof(json), &data_type);
+        if (ret != 0) break;
+
+        gateway_cloud_data_t data = {
+            .timestamp = k_uptime_get_32(),
+            .data_type = data_type,
+        };
+        strncpy(data.json_payload, json, sizeof(data.json_payload) - 1);
+        data.json_payload[sizeof(data.json_payload) - 1] = '\0';
+
+        event_publish_copy(EVENT_TYPE_CLOUD_UPLOAD, EVENT_PRIORITY_NORMAL,
+                           &data, sizeof(data));
+
+        g_cache.read_count++;
+        batch_count++;
+
+        if (batch_count >= 10) {
+            break;
+        }
+    }
+
+    cache_save_state();
+    k_mutex_unlock(&g_cache.lock);
+
+    if (batch_count > 0) {
+        LOG_INF("批量上报: %u 条", batch_count);
+    }
+
+    /* 如果还有剩余数据，100ms 后继续上报 */
+    if (g_cache.count > 0 && g_cache.net_connected) {
+        k_work_reschedule(&g_cache.upload_work, K_MSEC(100));
+    }
+}
+
 static void cache_on_net_state(bool connected)
 {
     bool was_connected = g_cache.net_connected;
     g_cache.net_connected = connected;
 
     if (connected && !was_connected) {
-        /* 网络恢复，批量上报 */
+        /* 网络恢复，启动批量上报工作项 */
         LOG_INF("网络恢复，开始批量上报离线数据...");
-
-        k_mutex_lock(&g_cache.lock, K_FOREVER);
-
-        uint16_t batch_count = 0;
-        char json[CACHE_ENTRY_SIZE];
-
-        while (g_cache.count > 0) {
-            uint8_t data_type = 0;
-            int ret = cache_read_entry(json, sizeof(json), &data_type);
-            if (ret != 0) break;
-
-            /* 重新发布为 CLOUD_UPLOAD 事件 */
-            gateway_cloud_data_t data = {
-                .timestamp = k_uptime_get_32(),
-                .data_type = data_type,
-            };
-            strncpy(data.json_payload, json, sizeof(data.json_payload) - 1);
-            data.json_payload[sizeof(data.json_payload) - 1] = '\0';
-
-            event_publish_copy(EVENT_TYPE_CLOUD_UPLOAD, EVENT_PRIORITY_NORMAL,
-                               &data, sizeof(data));
-
-            g_cache.read_count++;
-            batch_count++;
-
-            /* 避免一次性发布太多事件，每次间隔一点 */
-            if (batch_count >= 10) {
-                break;  /* 分批处理，下次继续 */
-            }
-        }
-
-        cache_save_state();
-        k_mutex_unlock(&g_cache.lock);
-
-        LOG_INF("批量上报完成: %u 条", batch_count);
+        k_work_reschedule(&g_cache.upload_work, K_NO_WAIT);
     }
 }
 
@@ -384,18 +435,16 @@ static void cache_save_state(void)
 {
     if (g_cache.fs.flash_device == NULL) return;
 
-    int ret;
-    ret = nvs_write(&g_cache.fs, CACHE_COUNT_ID, &g_cache.count, sizeof(g_cache.count));
+    cache_state_t state = {
+        .count = g_cache.count,
+        .head  = g_cache.head,
+        .tail  = g_cache.tail,
+        .crc   = cache_state_crc(g_cache.count, g_cache.head, g_cache.tail),
+    };
+
+    int ret = nvs_write(&g_cache.fs, CACHE_STATE_ID, &state, sizeof(state));
     if (ret < 0) {
-        LOG_WRN("保存 count 状态失败: %d", ret);
-    }
-    ret = nvs_write(&g_cache.fs, CACHE_HEAD_ID, &g_cache.head, sizeof(g_cache.head));
-    if (ret < 0) {
-        LOG_WRN("保存 head 状态失败: %d", ret);
-    }
-    ret = nvs_write(&g_cache.fs, CACHE_TAIL_ID, &g_cache.tail, sizeof(g_cache.tail));
-    if (ret < 0) {
-        LOG_WRN("保存 tail 状态失败: %d", ret);
+        LOG_WRN("保存缓存状态失败: %d", ret);
     }
 }
 
@@ -403,40 +452,39 @@ static void cache_load_state(void)
 {
     if (g_cache.fs.flash_device == NULL) return;
 
-    size_t len = sizeof(g_cache.head);
-    uint16_t loaded_head = 0;
-    uint16_t loaded_tail = 0;
-    uint16_t loaded_count = 0;
-
-    if (nvs_read(&g_cache.fs, CACHE_COUNT_ID, &loaded_count, sizeof(loaded_count)) >= 0) {
-        if (loaded_count <= CACHE_MAX_ENTRIES) {
-            g_cache.count = loaded_count;
-        }
-    }
-    if (nvs_read(&g_cache.fs, CACHE_HEAD_ID, &loaded_head, len) >= 0) {
-        if (loaded_head < CACHE_MAX_ENTRIES) {
-            g_cache.head = loaded_head;
-        }
-    }
-    if (nvs_read(&g_cache.fs, CACHE_TAIL_ID, &loaded_tail, len) >= 0) {
-        if (loaded_tail < CACHE_MAX_ENTRIES) {
-            g_cache.tail = loaded_tail;
-        }
-    }
-
-    /* 校验一致性：若 count 未加载成功，回退到基于 head/tail 的估算 */
-    if (g_cache.count == 0 && g_cache.head != g_cache.tail) {
-        if (g_cache.head >= g_cache.tail) {
-            g_cache.count = g_cache.head - g_cache.tail;
-        } else {
-            g_cache.count = CACHE_MAX_ENTRIES - g_cache.tail + g_cache.head;
-        }
-    }
-    if (g_cache.count > CACHE_MAX_ENTRIES) {
+    cache_state_t state;
+    int ret = nvs_read(&g_cache.fs, CACHE_STATE_ID, &state, sizeof(state));
+    if (ret < 0) {
+        LOG_WRN("加载缓存状态失败: %d，重置为默认值", ret);
         g_cache.count = 0;
-        g_cache.head = 0;
-        g_cache.tail = 0;
+        g_cache.head  = 0;
+        g_cache.tail  = 0;
+        return;
     }
+
+    /* CRC 校验：若数据损坏则丢弃，使用默认值重置 */
+    if (state.crc != cache_state_crc(state.count, state.head, state.tail)) {
+        LOG_WRN("缓存状态 CRC 校验失败，已丢弃损坏数据");
+        g_cache.count = 0;
+        g_cache.head  = 0;
+        g_cache.tail  = 0;
+        return;
+    }
+
+    /* 范围校验 */
+    if (state.count > CACHE_MAX_ENTRIES ||
+        state.head  >= CACHE_MAX_ENTRIES ||
+        state.tail  >= CACHE_MAX_ENTRIES) {
+        LOG_WRN("缓存状态数据越界，重置为默认值");
+        g_cache.count = 0;
+        g_cache.head  = 0;
+        g_cache.tail  = 0;
+        return;
+    }
+
+    g_cache.count = state.count;
+    g_cache.head  = state.head;
+    g_cache.tail  = state.tail;
 }
 
 /* =============================================================================

@@ -17,6 +17,7 @@
 #include <zephyr/shell/shell.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "event_system.h"
 #include "module_manager.h"
@@ -178,8 +179,18 @@ static int cmd_modbus_read(const struct shell* sh, size_t argc, char** argv)
         return -1;
     }
 
-    unsigned long addr_raw = shell_strtoul(argv[1], 0, NULL);
-    unsigned long count_raw = shell_strtoul(argv[2], 0, NULL);
+    int err1 = 0, err2 = 0;
+    unsigned long addr_raw = shell_strtoul(argv[1], 0, &err1);
+    unsigned long count_raw = shell_strtoul(argv[2], 0, &err2);
+
+    if (err1 != 0) {
+        shell_print(sh, "地址解析失败: '%s'", argv[1]);
+        return -1;
+    }
+    if (err2 != 0) {
+        shell_print(sh, "数量解析失败: '%s'", argv[2]);
+        return -1;
+    }
 
     if (addr_raw > 0xFFFF) {
         shell_print(sh, "addr 超出 16 位范围");
@@ -308,19 +319,19 @@ static int cmd_anomaly_config(const struct shell* sh, size_t argc, char** argv)
 
     char* endptr;
     float w = strtof(argv[2], &endptr);
-    if (endptr == argv[2] || w <= 0.0f) {
+    if (endptr == argv[2] || !isfinite(w) || w <= 0.0f) {
         shell_print(sh, "warning 阈值必须是正数");
         return -1;
     }
     float c = strtof(argv[3], &endptr);
-    if (endptr == argv[3] || c <= 0.0f) {
+    if (endptr == argv[3] || !isfinite(c) || c <= 0.0f) {
         shell_print(sh, "critical 阈值必须是正数");
         return -1;
     }
     float e = c * 1.5f;
     if (argc > 4) {
         e = strtof(argv[4], &endptr);
-        if (endptr == argv[4] || e <= 0.0f) {
+        if (endptr == argv[4] || !isfinite(e) || e <= 0.0f) {
             shell_print(sh, "emergency 阈值必须是正数");
             return -1;
         }

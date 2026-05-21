@@ -18,6 +18,7 @@
 #include <zephyr/net/net_event.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/socket.h>
+#include <zephyr/sys/atomic.h>
 #include <string.h>
 
 #include "event_system.h"
@@ -59,7 +60,7 @@ typedef struct {
     /* 状态 */
     eth_state_t          state;
     bool                 net_up;
-    bool                 pending_disconnect;
+    atomic_t             pending_disconnect;
     /* 重连 */
     uint32_t             reconnect_delay_ms;
     int64_t              last_connect_attempt;
@@ -150,11 +151,11 @@ int protocol_eth_stop(void)
         return 0;
     }
 
-    eth_mqtt_disconnect();
     g_eth.status = MODULE_STATUS_STOPPED;
+    atomic_set((atomic_t*)&g_eth.pending_disconnect, 1);
 
-    /* 等待工作线程实际退出 */
-    k_thread_join(&g_eth.worker_thread, K_MSEC(500));
+    k_thread_abort(&g_eth.worker_thread);
+    k_thread_join(&g_eth.worker_thread, K_FOREVER);
 
     LOG_INF("Ethernet/MQTT 模块已停止");
     return 0;
@@ -292,8 +293,7 @@ static void eth_worker_thread(void* p1, void* p2, void* p3)
 
     while (g_eth.status == MODULE_STATUS_RUNNING) {
         /* 处理回调请求的断开 */
-        if (g_eth.pending_disconnect) {
-            g_eth.pending_disconnect = false;
+        if (atomic_cas((atomic_t*)&g_eth.pending_disconnect, 1, 0)) {
             eth_mqtt_disconnect();
         }
 
@@ -311,7 +311,7 @@ static void eth_worker_thread(void* p1, void* p2, void* p3)
             if (g_eth.state != ETH_STATE_DISCONNECTED) {
                 eth_mqtt_disconnect();
             }
-            g_eth.pending_disconnect = false;
+            atomic_clear((atomic_t*)&g_eth.pending_disconnect);
             k_sleep(K_MSEC(1000));
             continue;
         }
@@ -388,12 +388,24 @@ static int eth_mqtt_connect(void)
     /* 设置 keepalive */
     g_eth.client.keepalive = GATEWAY_MQTT_KEEPALIVE_S;
 
+    /* 读取认证参数时持有锁，防止与 protocol_eth_mqtt_set_auth 并发写入产生数据竞争。
+     * 读完 auth 后即可解锁，因为后续 mqtt_client 初始化不再访问 g_eth.auth 字段。 */
+    k_mutex_lock(&g_eth.client_mutex, K_FOREVER);
+    bool has_auth = g_eth.has_auth;
+    char username[64] = {0};
+    char password[128] = {0};
+    if (has_auth) {
+        strncpy(username, g_eth.mqtt_username, sizeof(username) - 1);
+        strncpy(password, g_eth.mqtt_password, sizeof(password) - 1);
+    }
+    k_mutex_unlock(&g_eth.client_mutex);
+
     /* 设置认证（如有） */
-    if (g_eth.has_auth) {
-        g_eth.mqtt_user_name.utf8 = (uint8_t*)g_eth.mqtt_username;
-        g_eth.mqtt_user_name.size = strlen(g_eth.mqtt_username);
-        g_eth.mqtt_password_utf8.utf8 = (uint8_t*)g_eth.mqtt_password;
-        g_eth.mqtt_password_utf8.size = strlen(g_eth.mqtt_password);
+    if (has_auth) {
+        g_eth.mqtt_user_name.utf8 = (uint8_t*)username;
+        g_eth.mqtt_user_name.size = strlen(username);
+        g_eth.mqtt_password_utf8.utf8 = (uint8_t*)password;
+        g_eth.mqtt_password_utf8.size = strlen(password);
         g_eth.client.user_name = &g_eth.mqtt_user_name;
         g_eth.client.password = &g_eth.mqtt_password_utf8;
     }
@@ -439,7 +451,7 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
     case MQTT_EVT_CONNACK:
         if (evt->result != 0) {
             LOG_ERR("MQTT CONNACK 错误: %d", evt->result);
-            g_eth.pending_disconnect = true;
+            atomic_set((atomic_t*)&g_eth.pending_disconnect, 1);
             break;
         }
         g_eth.state = ETH_STATE_CONNECTED;
@@ -462,7 +474,7 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
         ret = mqtt_subscribe(client, &sub_list);
         if (ret != 0) {
             LOG_WRN("MQTT 订阅失败: %d", ret);
-            g_eth.pending_disconnect = true;
+            atomic_set((atomic_t*)&g_eth.pending_disconnect, 1);
             break;
         }
         g_eth.state = ETH_STATE_SUBSCRIBED;
@@ -471,9 +483,11 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
 
     case MQTT_EVT_DISCONNECT:
         LOG_INF("MQTT 断开通知");
-        g_eth.state = ETH_STATE_DISCONNECTED;
-        g_eth.disconnect_count++;
-        eth_publish_state_event(false);
+        if (g_eth.state != ETH_STATE_DISCONNECTED) {
+            g_eth.state = ETH_STATE_DISCONNECTED;
+            g_eth.disconnect_count++;
+            eth_publish_state_event(false);
+        }
         break;
 
     case MQTT_EVT_PUBLISH: {

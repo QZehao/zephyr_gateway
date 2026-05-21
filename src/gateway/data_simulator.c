@@ -148,7 +148,9 @@ int data_simulator_stop(void)
     }
 
     g_sim.status = MODULE_STATUS_STOPPED;
-    k_msleep(50);
+
+    /* 等待线程实际退出，避免旧线程与新启动的线程并发 */
+    k_thread_join(&g_sim.thread, K_MSEC(500));
 
     LOG_INF("数据模拟模块已停止");
     return 0;

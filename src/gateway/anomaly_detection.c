@@ -49,6 +49,8 @@ typedef struct {
     float values[ANOMALY_WINDOW_SIZE];
     uint16_t head;       /* 写入位置 */
     uint16_t count;      /* 当前有效数据点数 */
+    float sum;           /* 窗口内数据之和（增量维护，O(1) 更新） */
+    float sum_sq;        /* 窗口内数据平方之和（增量维护） */
     float mean;
     float stddev;
     bool valid;          /* 窗口是否已满（基线有效） */
@@ -56,6 +58,7 @@ typedef struct {
 
 typedef struct {
     module_status_t status;
+    struct k_mutex  lock;         /* 保护全局状态，防止 Shell 与 data_bus 回调竞争 */
     sensor_window_t windows[MAX_SENSOR_TYPES];
     /* 阈值（按传感器类型独立配置） */
     float warning_sigma[MAX_SENSOR_TYPES];
@@ -102,6 +105,8 @@ static void anomaly_check_multi_dim(void);
 static void anomaly_sensor_data_cb(data_bus_channel_t* ch,
                                     data_bus_block_t* block,
                                     void* user_data);
+static void anomaly_detection_get_stats_unlocked(uint32_t* warning_count, uint32_t* critical_count,
+                                                  uint32_t* emergency_count);
 
 /* =============================================================================
  * 模块接口实现
@@ -113,6 +118,7 @@ int anomaly_detection_init(void* config)
     LOG_INF("初始化异常检测模块...");
 
     memset(&g_ad, 0, sizeof(g_ad));
+    k_mutex_init(&g_ad.lock);
     g_ad.status = MODULE_STATUS_INITIALIZED;
     for (int i = 0; i < MAX_SENSOR_TYPES; i++) {
         g_ad.warning_sigma[i]  = (float)CONFIG_GATEWAY_ANOMALY_WARNING_SIGMA / 10.0f;
@@ -205,20 +211,28 @@ module_status_t anomaly_detection_get_status(void)
 
 int anomaly_detection_control(int cmd, void* arg)
 {
+    k_mutex_lock(&g_ad.lock, K_FOREVER);
+
     switch (cmd) {
     case ANOMALY_CMD_GET_STATS:
         if (arg != NULL) {
             uint32_t* s = (uint32_t*)arg;
-            anomaly_detection_get_stats(&s[0], &s[1], &s[2]);
+            anomaly_detection_get_stats_unlocked(&s[0], &s[1], &s[2]);
         }
+        k_mutex_unlock(&g_ad.lock);
         return 0;
     case ANOMALY_CMD_SET_THRESHOLD:
         if (arg != NULL) {
-            anomaly_threshold_cmd_t* cmd = (anomaly_threshold_cmd_t*)arg;
-            return anomaly_detection_set_threshold(cmd->sensor_type, cmd->warning_sigma,
-                                                    cmd->critical_sigma, cmd->emergency_sigma);
+            anomaly_threshold_cmd_t* tcmd = (anomaly_threshold_cmd_t*)arg;
+            g_ad.warning_sigma[tcmd->sensor_type]  = tcmd->warning_sigma;
+            g_ad.critical_sigma[tcmd->sensor_type] = tcmd->critical_sigma;
+            g_ad.emergency_sigma[tcmd->sensor_type]= tcmd->emergency_sigma;
+            LOG_INF("传感器 %u 阈值更新: W=%.1f C=%.1f E=%.1f sigma",
+                    tcmd->sensor_type, (double)tcmd->warning_sigma,
+                    (double)tcmd->critical_sigma, (double)tcmd->emergency_sigma);
         }
-        return -1;
+        k_mutex_unlock(&g_ad.lock);
+        return 0;
     case ANOMALY_CMD_RESET_WINDOW:
         if (arg != NULL) {
             uint8_t sensor_type = *(uint8_t*)arg;
@@ -226,8 +240,10 @@ int anomaly_detection_control(int cmd, void* arg)
                 memset(&g_ad.windows[sensor_type], 0, sizeof(sensor_window_t));
             }
         }
+        k_mutex_unlock(&g_ad.lock);
         return 0;
     default:
+        k_mutex_unlock(&g_ad.lock);
         return -1;
     }
 }
@@ -238,6 +254,15 @@ int anomaly_detection_control(int cmd, void* arg)
 
 void anomaly_detection_get_stats(uint32_t* warning_count, uint32_t* critical_count,
                                   uint32_t* emergency_count)
+{
+    k_mutex_lock(&g_ad.lock, K_FOREVER);
+    anomaly_detection_get_stats_unlocked(warning_count, critical_count, emergency_count);
+    k_mutex_unlock(&g_ad.lock);
+}
+
+/* 无锁版本：调用者必须持有 g_ad.lock */
+static void anomaly_detection_get_stats_unlocked(uint32_t* warning_count, uint32_t* critical_count,
+                                                  uint32_t* emergency_count)
 {
     if (warning_count != NULL) *warning_count = g_ad.warning_count;
     if (critical_count != NULL) *critical_count = g_ad.critical_count;
@@ -252,9 +277,11 @@ int anomaly_detection_set_threshold(uint8_t sensor_type,
     if (sensor_type >= MAX_SENSOR_TYPES) {
         return -1;
     }
+    k_mutex_lock(&g_ad.lock, K_FOREVER);
     g_ad.warning_sigma[sensor_type]  = warning_sigma;
     g_ad.critical_sigma[sensor_type] = critical_sigma;
     g_ad.emergency_sigma[sensor_type]= emergency_sigma;
+    k_mutex_unlock(&g_ad.lock);
     LOG_INF("传感器 %u 阈值更新: W=%.1f C=%.1f E=%.1f sigma",
             sensor_type, (double)warning_sigma, (double)critical_sigma, (double)emergency_sigma);
     return 0;
@@ -269,6 +296,8 @@ static void anomaly_on_sensor_data(const gateway_sensor_data_t* sensor)
     if (sensor == NULL || sensor->sensor_type >= MAX_SENSOR_TYPES) {
         return;
     }
+
+    k_mutex_lock(&g_ad.lock, K_FOREVER);
 
     sensor_window_t* win = &g_ad.windows[sensor->sensor_type];
 
@@ -295,32 +324,41 @@ static void anomaly_on_sensor_data(const gateway_sensor_data_t* sensor)
          sensor->sensor_type == SENSOR_TYPE_TEMPERATURE)) {
         anomaly_check_multi_dim();
     }
+
+    k_mutex_unlock(&g_ad.lock);
 }
 
 static void anomaly_update_window(sensor_window_t* win, float value)
 {
-    /* 加入新值 */
+    /* 窗口已满时，先移出即将被覆盖的最旧值 */
+    if (win->count >= ANOMALY_WINDOW_SIZE) {
+        float old = win->values[win->head];
+        win->sum -= old;
+        win->sum_sq -= old * old;
+    }
+
+    /* 写入新值 */
     win->values[win->head] = value;
+    win->sum += value;
+    win->sum_sq += value * value;
     win->head = (win->head + 1) % ANOMALY_WINDOW_SIZE;
     if (win->count < ANOMALY_WINDOW_SIZE) {
         win->count++;
     }
 
-    /* 计算均值 */
-    float sum = 0.0f;
-    for (uint16_t i = 0; i < win->count; i++) {
-        sum += win->values[i];
-    }
-    win->mean = sum / win->count;
+    /* 计算均值（O(1)） */
+    win->mean = win->sum / win->count;
 
-    /* 计算标准差 */
+    /* 计算标准差（O(1)） */
     if (win->count >= 2) {
-        float variance = 0.0f;
-        for (uint16_t i = 0; i < win->count; i++) {
-            float diff = win->values[i] - win->mean;
-            variance += diff * diff;
+        float mean_sq = win->mean * win->mean;
+        float avg_sq = win->sum_sq / win->count;
+        float variance = avg_sq - mean_sq;
+        if (variance < 0.0f) {
+            variance = 0.0f;  /* 浮点精度可能导致极小负数 */
         }
-        variance /= (win->count - 1);  /* 样本方差，小窗口更准确 */
+        /* 转换为样本方差，与原始实现一致 */
+        variance = variance * win->count / (win->count - 1);
         win->stddev = sqrtf(variance);
     } else {
         win->stddev = 0.0f;

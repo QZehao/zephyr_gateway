@@ -168,12 +168,18 @@ int protocol_modbus_stop(void)
         return 0;
     }
 
+    g_modbus.status = MODULE_STATUS_STOPPED;
+
+    /* 唤醒可能阻塞在 rx_sem 的工作线程，使其能检查状态并退出 */
+    k_sem_give(&g_modbus.rx_sem);
+
+    k_thread_abort(&g_modbus.worker_thread);
+    k_thread_join(&g_modbus.worker_thread, K_FOREVER);
+
+    /* 停止 UART IRQ（在 worker_thread 退出后，确保无并发访问） */
     if (g_modbus.dev != NULL) {
         uart_irq_rx_disable(g_modbus.dev);
     }
-
-    g_modbus.status = MODULE_STATUS_STOPPED;
-    k_thread_join(&g_modbus.worker_thread, K_MSEC(500));
 
     LOG_INF("Modbus 模块已停止");
     return 0;
