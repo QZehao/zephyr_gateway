@@ -10,9 +10,9 @@ if(NOT CONF_FILE)
       CACHE STRING "Zephyr application config files" FORCE)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/framework/app.overlay")
-  list(APPEND DTC_OVERLAY_FILE "${CMAKE_CURRENT_LIST_DIR}/framework/app.overlay")
-endif()
+# framework/app.overlay 面向 STM32 等实板 SRAM；QEMU/native_sim 改用 framework/boards/*.overlay
+include(${CMAKE_CURRENT_LIST_DIR}/framework/cmake/zeplod_app_overlays.cmake)
+zeplod_append_app_devicetree_overlays("${CMAKE_CURRENT_LIST_DIR}")
 
 if(NOT DEFINED ENV{ZEPHYR_EXTRA_MODULES} OR "$ENV{ZEPHYR_EXTRA_MODULES}" STREQUAL "")
   set(ENV{ZEPHYR_EXTRA_MODULES} "${CMAKE_CURRENT_LIST_DIR}/modules/zephyr_gateway")
