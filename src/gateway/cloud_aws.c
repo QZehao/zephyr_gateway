@@ -23,7 +23,7 @@
  */
 
 #include "cloud_aws.h"
-#include "protocol_eth.h"
+#include "protocol_mqtt.h"
 #include "gateway_config.h"
 #include "app_config.h"
 
@@ -62,13 +62,13 @@ static int cloud_aws_publish(cloud_msg_type_t type, const char* json_payload)
 
     /* AWS IoT 要求 TLS (8883)，当前项目未启用 TLS，publish 会失败。
      * 先尝试用明文端口发送（仅用于测试），生产必须启用 TLS。 */
-    return protocol_eth_mqtt_publish(topic, json_payload,
-                                     (uint16_t)strlen(json_payload));
+    return protocol_mqtt_publish(topic, json_payload,
+                                 (uint16_t)strlen(json_payload));
 }
 
 static bool cloud_aws_is_connected(void)
 {
-    return protocol_eth_is_connected();
+    return protocol_mqtt_is_connected();
 }
 
 static void cloud_aws_print_status(const struct shell* sh)
@@ -115,7 +115,11 @@ static void aws_setup_connection(void)
      */
 
     /* 清除认证（AWS 使用证书，不需要用户名密码） */
-    protocol_eth_mqtt_set_auth(NULL, NULL);
+    protocol_mqtt_set_auth(NULL, NULL);
+
+    /* TODO: 设置 TLS broker */
+    (void)AWS_ENDPOINT;
+    (void)AWS_REGION;
 
     LOG_INF("AWS IoT Core 连接参数: endpoint=%s thing=%s",
             AWS_ENDPOINT, AWS_THING_NAME);
@@ -175,7 +179,7 @@ static void cloud_aws_on_event(const event_t* event, void* user_data)
  * 模块接口声明与自动注册
  * ============================================================================= */
 
-static const char* const cloud_aws_deps[] = {"protocol_eth", NULL};
+static const char* const cloud_aws_deps[] = {"protocol_mqtt", NULL};
 
 DECLARE_MODULE_INTERFACE_WITH_DEPS(cloud_aws, cloud_aws_deps);
 

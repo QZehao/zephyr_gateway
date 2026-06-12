@@ -2,7 +2,7 @@
  * @file cloud_private.h
  * @brief 私有 MQTT Broker Provider
  *
- * 基于 protocol_eth 的通用 MQTT 能力，对接私有/自部署 MQTT Broker。
+ * 基于 protocol_mqtt 的通用 MQTT 能力，对接私有/自部署 MQTT Broker。
  * 这是默认的 Provider，行为与重构前的 cloud_upload 直接发 MQTT 完全一致。
  */
 

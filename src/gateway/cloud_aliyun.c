@@ -17,7 +17,7 @@
  */
 
 #include "cloud_aliyun.h"
-#include "protocol_eth.h"
+#include "protocol_mqtt.h"
 #include "gateway_config.h"
 #include "app_config.h"
 
@@ -79,12 +79,12 @@ static int cloud_aliyun_publish(cloud_msg_type_t type, const char* json_payload)
         return -ENOMEM;
     }
 
-    return protocol_eth_mqtt_publish(topic, payload, (uint16_t)strlen(payload));
+    return protocol_mqtt_publish(topic, payload, (uint16_t)strlen(payload));
 }
 
 static bool cloud_aliyun_is_connected(void)
 {
-    return protocol_eth_is_connected();
+    return protocol_mqtt_is_connected();
 }
 
 static void cloud_aliyun_print_status(const struct shell* sh)
@@ -140,7 +140,7 @@ static void aliyun_setup_auth(void)
      */
     const char* password = ALIYUN_DEVICE_SECRET;
 
-    protocol_eth_mqtt_set_auth(username, password);
+    protocol_mqtt_set_auth(username, password);
 
     LOG_INF("阿里云 MQTT 参数: clientId=%s user=%s", client_id, username);
 }
@@ -167,7 +167,7 @@ static int cloud_aliyun_start(void)
 
 static int cloud_aliyun_stop(void)
 {
-    protocol_eth_mqtt_set_auth(NULL, NULL);
+    protocol_mqtt_set_auth(NULL, NULL);
     LOG_INF("阿里云 Provider 已停止");
     return 0;
 }
@@ -199,7 +199,7 @@ static void cloud_aliyun_on_event(const event_t* event, void* user_data)
  * 模块接口声明与自动注册
  * ============================================================================= */
 
-static const char* const cloud_aliyun_deps[] = {"protocol_eth", NULL};
+static const char* const cloud_aliyun_deps[] = {"protocol_mqtt", NULL};
 
 DECLARE_MODULE_INTERFACE_WITH_DEPS(cloud_aliyun, cloud_aliyun_deps);
 

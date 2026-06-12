@@ -10,7 +10,8 @@
 #include "gateway_config.h"
 #include "protocol_can.h"
 #include "protocol_modbus.h"
-#include "protocol_eth.h"
+#include "network_manager.h"
+#include "protocol_mqtt.h"
 #include "anomaly_detection.h"
 #include "cloud_upload.h"
 #include "offline_cache.h"
@@ -52,6 +53,10 @@ typedef struct
 
 static const gateway_subscription_t g_subscriptions[] = {
 	/* sensor 数据已迁移到 data_bus，不再走 event_system */
+
+	/* protocol_mqtt 订阅网络状态 */
+	{"protocol_mqtt", EVENT_TYPE_NET_UP},
+	{"protocol_mqtt", EVENT_TYPE_NET_DOWN},
 
 	/* cloud_upload 订阅 anomaly */
 	{"cloud_upload", EVENT_TYPE_ANOMALY_WARNING},
@@ -156,9 +161,9 @@ static void gateway_print_banner(void)
 	printk("    [-] Modbus RTU Master (禁用)\n");
 #endif
 #if GATEWAY_MQTT_ENABLE
-	printk("    [+] MQTT 上云\n");
+	printk("    [+] 网络管理 / MQTT 上云\n");
 #else
-	printk("    [-] MQTT 上云 (禁用)\n");
+	printk("    [-] 网络管理 / MQTT 上云 (禁用)\n");
 #endif
 #if GATEWAY_DATA_SIMULATOR_ENABLE
 	printk("    [+] 数据模拟采集\n");

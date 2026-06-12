@@ -2,12 +2,12 @@
  * @file cloud_private.c
  * @brief 私有 MQTT Broker Provider 实现
  *
- * 基于 protocol_eth 的通用 MQTT 能力，对接私有/自部署 MQTT Broker。
+ * 基于 protocol_mqtt 的通用 MQTT 能力，对接私有/自部署 MQTT Broker。
  * 行为与重构前的 cloud_upload 直接发 MQTT 完全一致。
  */
 
 #include "cloud_private.h"
-#include "protocol_eth.h"
+#include "protocol_mqtt.h"
 #include "gateway_config.h"
 #include "app_config.h"
 
@@ -40,13 +40,13 @@ static int cloud_private_publish(cloud_msg_type_t type, const char* json_payload
         return -EINVAL;
     }
 
-    return protocol_eth_mqtt_publish(topic, json_payload,
-                                     (uint16_t)strlen(json_payload));
+    return protocol_mqtt_publish(topic, json_payload,
+                                 (uint16_t)strlen(json_payload));
 }
 
 static bool cloud_private_is_connected(void)
 {
-    return protocol_eth_is_connected();
+    return protocol_mqtt_is_connected();
 }
 
 static void cloud_private_print_status(const struct shell* sh)
@@ -133,7 +133,7 @@ static void cloud_private_on_event(const event_t* event, void* user_data)
  * 模块接口声明与自动注册
  * ============================================================================= */
 
-static const char* const cloud_private_deps[] = {"protocol_eth", NULL};
+static const char* const cloud_private_deps[] = {"protocol_mqtt", NULL};
 
 DECLARE_MODULE_INTERFACE_WITH_DEPS(cloud_private, cloud_private_deps);
 

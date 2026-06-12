@@ -30,7 +30,8 @@
 #include "protocol_modbus.h"
 #endif
 #if GATEWAY_MQTT_ENABLE
-#include "protocol_eth.h"
+#include "network_manager.h"
+#include "protocol_mqtt.h"
 #include "cloud_upload.h"
 #endif
 #if GATEWAY_ANOMALY_ENABLE
@@ -100,7 +101,8 @@ static int cmd_gateway_status(const struct shell* sh, size_t argc, char** argv)
     shell_print(sh, "  协议层:");
     print_module_status(sh, "CAN:", "protocol_can");
     print_module_status(sh, "Modbus:", "protocol_modbus");
-    print_module_status(sh, "Ethernet:", "protocol_eth");
+    print_module_status(sh, "Network:", "network_manager");
+    print_module_status(sh, "MQTT:", "protocol_mqtt");
     shell_print(sh, "  业务层:");
     print_module_status(sh, "Anomaly:", "anomaly_detection");
     print_module_status(sh, "Cloud:", "cloud_upload");

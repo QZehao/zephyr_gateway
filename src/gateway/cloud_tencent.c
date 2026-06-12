@@ -21,7 +21,7 @@
  */
 
 #include "cloud_tencent.h"
-#include "protocol_eth.h"
+#include "protocol_mqtt.h"
 #include "gateway_config.h"
 #include "app_config.h"
 
@@ -66,13 +66,13 @@ static int cloud_tencent_publish(cloud_msg_type_t type, const char* json_payload
         return -EINVAL;
     }
 
-    return protocol_eth_mqtt_publish(topic, json_payload,
-                                     (uint16_t)strlen(json_payload));
+    return protocol_mqtt_publish(topic, json_payload,
+                                 (uint16_t)strlen(json_payload));
 }
 
 static bool cloud_tencent_is_connected(void)
 {
-    return protocol_eth_is_connected();
+    return protocol_mqtt_is_connected();
 }
 
 static void cloud_tencent_print_status(const struct shell* sh)
@@ -127,7 +127,7 @@ static void tencent_setup_auth(void)
     /* TODO: Password 应为 HMAC-SHA256 签名，当前暂用 DeviceSecret 占位 */
     const char* password = TENCENT_DEVICE_SECRET;
 
-    protocol_eth_mqtt_set_auth(username, password);
+    protocol_mqtt_set_auth(username, password);
 
     LOG_INF("腾讯云 MQTT 参数: clientId=%s user=%s", client_id, username);
 }
@@ -154,7 +154,7 @@ static int cloud_tencent_start(void)
 
 static int cloud_tencent_stop(void)
 {
-    protocol_eth_mqtt_set_auth(NULL, NULL);
+    protocol_mqtt_set_auth(NULL, NULL);
     LOG_INF("腾讯云 Provider 已停止");
     return 0;
 }
@@ -186,7 +186,7 @@ static void cloud_tencent_on_event(const event_t* event, void* user_data)
  * 模块接口声明与自动注册
  * ============================================================================= */
 
-static const char* const cloud_tencent_deps[] = {"protocol_eth", NULL};
+static const char* const cloud_tencent_deps[] = {"protocol_mqtt", NULL};
 
 DECLARE_MODULE_INTERFACE_WITH_DEPS(cloud_tencent, cloud_tencent_deps);
 

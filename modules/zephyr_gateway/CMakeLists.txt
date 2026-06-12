@@ -25,7 +25,8 @@ zephyr_library_sources_ifdef(
 
 zephyr_library_sources_ifdef(
   CONFIG_GATEWAY_MQTT_ENABLE
-  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/protocol_eth.c
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/network_manager.c
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/protocol_mqtt.c
 )
 
 zephyr_library_sources_ifdef(

@@ -19,7 +19,8 @@ src/gateway/
 ├── gateway_config.h        # 模块公共配置 + SYS_INIT 优先级
 ├── protocol_can.c/h        # CAN 总线数据采集
 ├── protocol_modbus.c/h     # Modbus RTU Master (UART/485)
-├── protocol_eth.c/h        # 以太网/MQTT 连接管理 + 认证接口
+├── network_manager.c/h     # 网络链路状态管理
+├── protocol_mqtt.c/h       # MQTT 连接管理 + 认证接口
 ├── anomaly_detection.c/h   # 滑动窗口自适应阈值异常检测
 ├── cloud_upload.c/h        # 云数据上传业务（JSON格式化 + 速率控制 + 离线缓存触发）
 ├── cloud_provider.c/h      # 云平台抽象层（Provider 注册表 + 多播分发）
@@ -54,7 +55,7 @@ data_bus 通道 "sensor" ──┬──> anomaly_detection
                           │                   ↓                           ↓                           ↓
                           │            cloud_private              cloud_aliyun              cloud_tencent
                           │                   │                           │                           │
-                          │                   └──> protocol_eth     protocol_eth            protocol_eth
+                          │                   └──> protocol_mqtt     protocol_mqtt            protocol_mqtt
                           │
                           └──> cloud_upload (旁路订阅)
                                        │
@@ -76,7 +77,7 @@ data_bus 通道 "sensor" ──┬──> anomaly_detection
 | 腾讯云 IoT Hub | 密钥 HMAC-SHA256 | 设备证书 | `CONFIG_GATEWAY_CLOUD_PROVIDER_TENCENT` |
 | AWS IoT Core | X.509 证书 mTLS | TLS 8883 + 证书链 | `CONFIG_GATEWAY_CLOUD_PROVIDER_AWS` |
 
-**当前限制**：所有 Provider 共享 `protocol_eth` 的单一 MQTT 连接（轮流设置认证参数）。如需真正多 Broker 并行，每个 Provider 需独立管理 `mqtt_client` 实例。
+**当前限制**：所有 Provider 共享 `protocol_mqtt` 的单一 MQTT 连接（轮流设置认证参数）。如需真正多 Broker 并行，每个 Provider 需独立管理 `mqtt_client` 实例。
 
 ---
 

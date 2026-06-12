@@ -62,13 +62,14 @@ config GATEWAY_MODBUS_POLL_INTERVAL_MS
 	range 100 10000
 
 config GATEWAY_MQTT_ENABLE
-	bool "Enable Ethernet/MQTT connection module"
+	bool "Enable network manager and MQTT connection module"
 	depends on ZEPHYR_GATEWAY_BUSINESS
 	depends on NETWORKING
 	depends on MQTT_LIB
 	default y
 	help
-	  Enable MQTT client for cloud data upload.
+	  Enable network_manager (link state) and protocol_mqtt (MQTT client)
+	  for cloud data upload.
 
 config GATEWAY_MQTT_BROKER_ADDR
 	string "MQTT broker address"

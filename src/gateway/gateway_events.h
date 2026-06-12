@@ -26,7 +26,11 @@ extern "C" {
 #define EVENT_TYPE_ANOMALY_CRITICAL   111  /* |x-μ|/σ ≥ critical_sigma（默认 3.0） */
 #define EVENT_TYPE_ANOMALY_EMERGENCY  112  /* |x-μ|/σ ≥ emergency_sigma（默认 4.0）或绝对上下限 */
 
-/* 网络状态 */
+/* 网络链路状态 */
+#define EVENT_TYPE_NET_UP             118
+#define EVENT_TYPE_NET_DOWN           119
+
+/* 云平台连接状态 */
 #define EVENT_TYPE_CLOUD_CONNECTED    120
 #define EVENT_TYPE_CLOUD_DISCONNECTED 121
 

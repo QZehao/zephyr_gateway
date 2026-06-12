@@ -2,7 +2,7 @@
  * @file cloud_upload.c
  * @brief MQTT 数据上云模块实现
  *
- * 订阅传感器数据和异常事件，格式化为 JSON，通过 protocol_eth 的 MQTT 发送。
+ * 订阅传感器数据和异常事件，格式化为 JSON，通过已注册的 cloud provider 发送。
  * 断网时发布 EVENT_TYPE_CLOUD_UPLOAD 供 offline_cache 存储。
  */
 
