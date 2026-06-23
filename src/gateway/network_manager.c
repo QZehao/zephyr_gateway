@@ -100,9 +100,8 @@ int network_manager_stop(void)
         return 0;
     }
 
+    /* 置位 STOPPED：工作线程在分片短睡中检查状态后自然退出（不使用 k_thread_abort） */
     g_net_mgr.status = MODULE_STATUS_STOPPED;
-
-    k_thread_abort(&g_net_mgr.worker_thread);
     k_thread_join(&g_net_mgr.worker_thread, K_FOREVER);
 
     LOG_INF("网络管理模块已停止");
@@ -156,6 +155,10 @@ static void network_manager_worker_thread(void* p1, void* p2, void* p3)
 
     LOG_INF("网络管理工作线程已启动");
 
+    /* 分片睡眠：每次 50ms，使 stop 后 join 在 ~50ms 内完成 */
+#define NET_MGR_SLICE_MS    50
+#define NET_MGR_SLICES      (NET_MGR_POLL_INTERVAL_MS / NET_MGR_SLICE_MS)
+
     while (g_net_mgr.status == MODULE_STATUS_RUNNING) {
         bool net_was_up = g_net_mgr.net_up;
         g_net_mgr.net_up = network_is_up();
@@ -168,7 +171,10 @@ static void network_manager_worker_thread(void* p1, void* p2, void* p3)
             event_publish_copy(EVENT_TYPE_NET_DOWN, EVENT_PRIORITY_HIGH, NULL, 0);
         }
 
-        k_sleep(K_MSEC(NET_MGR_POLL_INTERVAL_MS));
+        /* 分片轮询：每 50ms 检查停止标志，保证 stop 后快速退出 */
+        for (int s = 0; s < NET_MGR_SLICES && g_net_mgr.status == MODULE_STATUS_RUNNING; s++) {
+            k_sleep(K_MSEC(NET_MGR_SLICE_MS));
+        }
     }
 
     LOG_INF("网络管理工作线程已退出");

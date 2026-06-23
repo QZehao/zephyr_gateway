@@ -142,9 +142,9 @@ int protocol_can_stop(void)
         return 0;
     }
 
+    /* 置位 STOPPED：rx_thread 的 k_msgq_get 带 100ms 超时，
+     * 超时后检查 status 退出，线程退出路径会执行 can_remove_rx_filter 清理 */
     g_can.status = MODULE_STATUS_STOPPED;
-
-    k_thread_abort(&g_can.rx_thread);
     k_thread_join(&g_can.rx_thread, K_FOREVER);
 
     /* 停止 CAN 硬件（在 rx_thread 退出后执行，确保无并发访问） */

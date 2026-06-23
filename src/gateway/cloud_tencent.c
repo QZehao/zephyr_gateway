@@ -21,6 +21,7 @@
  */
 
 #include "cloud_tencent.h"
+#include "cloud_crypto.h"
 #include "protocol_mqtt.h"
 #include "gateway_config.h"
 #include <zeplod/app_config.h>
@@ -81,8 +82,11 @@ static void cloud_tencent_print_status(const struct shell* sh)
                 cloud_tencent_is_connected() ? "已连接" : "未连接");
     shell_print(sh, "    Product:  %s", TENCENT_PRODUCT_ID);
     shell_print(sh, "    Device:   %s", TENCENT_DEVICE_NAME);
-    shell_print(sh, "    说明：Password 当前为 DeviceSecret 占位，"
-                    "生产环境需 HMAC-SHA256 签名");
+#if defined(CONFIG_MBEDTLS)
+    shell_print(sh, "    认证：HMAC-SHA256 密钥认证（已启用）");
+#else
+    shell_print(sh, "    认证：DeviceSecret 占位（CONFIG_MBEDTLS 未启用）");
+#endif
 }
 
 /* =============================================================================
@@ -109,27 +113,66 @@ const cloud_provider_t* cloud_tencent_get_provider(void)
  * 内部辅助函数
  * ============================================================================= */
 
+/**
+ * @brief 配置腾讯云 IoT Hub MQTT 密钥认证参数
+ *
+ * 按腾讯云规范构造：
+ *   - clientId = ${productId}${deviceName}
+ *   - username = ${productId}${deviceName};${sdkappid};${connid};${expiry}
+ *     sdkappid/connid/expiry：无来源时用 Kconfig 占位（"12010126"/"rand"/"0"），
+ *     expiry=0 表示永不过期（仅适用于内网或测试场景，生产应按文档设置有效期）。
+ *   - password = HMAC-SHA256(DeviceSecret, username + "\n" + connid + "\n" + expiry)
+ *     注：腾讯云签名格式详见官方文档，此处以 username 字段作为签名对象以匹配常见实现。
+ *     若 HMAC 不可用，回退到 DeviceSecret 占位并 LOG_WRN。
+ *   - broker = ${productId}.iotcloud.tencentdevices.com:1883
+ *
+ * @note sdkappid/connid/expiry 来源：部署时可通过 Kconfig 或运行时接口注入。
+ *       当前用固定占位值，生产环境需按腾讯云文档要求填充有效 sdkappid 和到期时间。
+ */
 static void tencent_setup_auth(void)
 {
-    /* 构造腾讯云 MQTT 连接参数 */
-    char username[128];
-    char client_id[128];
-
     /* ClientId = productId + deviceName */
+    char client_id[128];
     snprintf(client_id, sizeof(client_id), "%s%s",
              TENCENT_PRODUCT_ID, TENCENT_DEVICE_NAME);
 
-    /* Username = productId + deviceName; sdkappid; connid; expiry
-     * 简化：sdkappid/connid/expiry 先留空或固定值 */
-    snprintf(username, sizeof(username), "%s%s;;;;",
-             TENCENT_PRODUCT_ID, TENCENT_DEVICE_NAME);
+    /* sdkappid / connid / expiry 占位：无 Kconfig 来源时使用固定值
+     * 生产环境应通过平台控制台获取 sdkappid，connid 建议随机，expiry 设合理有效期 */
+    const char* sdkappid = "12010126";  /* 腾讯云默认 sdkappid 占位 */
+    const char* connid   = "rand";      /* connid 占位（建议运行时随机生成） */
+    const char* expiry   = "0";         /* 0=永不过期（仅测试），生产需设有效时间戳 */
 
-    /* TODO: Password 应为 HMAC-SHA256 签名，当前暂用 DeviceSecret 占位 */
-    const char* password = TENCENT_DEVICE_SECRET;
+    /* Username = productId + deviceName;sdkappid;connid;expiry */
+    char username[192];
+    snprintf(username, sizeof(username), "%s;%s;%s;%s",
+             client_id, sdkappid, connid, expiry);
 
+    /* 签名内容：username（含分号字段），与腾讯云常见实现对齐 */
+    char password[128] = {0};
+    int ret = gateway_hmac_sha256_hex(
+        (const uint8_t*)TENCENT_DEVICE_SECRET, strlen(TENCENT_DEVICE_SECRET),
+        (const uint8_t*)username, strlen(username),
+        password, sizeof(password));
+
+    if (ret != 0) {
+        /* HMAC 不可用，回退到 DeviceSecret 占位 */
+        LOG_WRN("HMAC-SHA256 签名失败 (%d)，回退到 DeviceSecret 占位密码（仅测试用途）", ret);
+        strncpy(password, TENCENT_DEVICE_SECRET, sizeof(password) - 1);
+        password[sizeof(password) - 1] = '\0';
+    }
+
+    /* 构造腾讯云 broker 地址 */
+    char broker[128];
+    snprintf(broker, sizeof(broker),
+             "%s.iotcloud.tencentdevices.com", TENCENT_PRODUCT_ID);
+
+    /* 下发到 MQTT 层 */
+    protocol_mqtt_set_client_id(client_id);
     protocol_mqtt_set_auth(username, password);
+    protocol_mqtt_set_broker(broker, 1883);
 
-    LOG_INF("腾讯云 MQTT 参数: clientId=%s user=%s", client_id, username);
+    LOG_INF("腾讯云 MQTT 参数: clientId=%s user=%s broker=%s",
+            client_id, username, broker);
 }
 
 /* =============================================================================

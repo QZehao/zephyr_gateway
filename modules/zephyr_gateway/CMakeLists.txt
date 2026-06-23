@@ -39,6 +39,7 @@ zephyr_library_sources_ifdef(
   CONFIG_GATEWAY_CLOUD_UPLOAD_ENABLE
   ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/cloud_provider.c
   ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/cloud_upload.c
+  ${CMAKE_CURRENT_LIST_DIR}/../../src/gateway/cloud_crypto.c
 )
 
 zephyr_library_sources_ifdef(

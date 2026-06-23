@@ -17,6 +17,7 @@
  */
 
 #include "cloud_aliyun.h"
+#include "cloud_crypto.h"
 #include "protocol_mqtt.h"
 #include "gateway_config.h"
 #include <zeplod/app_config.h>
@@ -94,8 +95,11 @@ static void cloud_aliyun_print_status(const struct shell* sh)
     shell_print(sh, "    Product:  %s", ALIYUN_PRODUCT_KEY);
     shell_print(sh, "    Device:   %s", ALIYUN_DEVICE_NAME);
     shell_print(sh, "    Region:   %s", ALIYUN_REGION);
-    shell_print(sh, "    说明：Password 当前为 DeviceSecret 占位，"
-                    "生产环境需 HMAC-SHA1 签名");
+#if defined(CONFIG_MBEDTLS)
+    shell_print(sh, "    认证：HMAC-SHA1 一机一密（已启用）");
+#else
+    shell_print(sh, "    认证：DeviceSecret 占位（CONFIG_MBEDTLS 未启用）");
+#endif
 }
 
 /* =============================================================================
@@ -122,27 +126,65 @@ const cloud_provider_t* cloud_aliyun_get_provider(void)
  * 内部辅助函数
  * ============================================================================= */
 
+/**
+ * @brief 配置阿里云 MQTT 一机一密认证参数
+ *
+ * 按阿里云规范构造：
+ *   - clientId = ${rawClientId}|securemode=3,signmethod=hmacsha1|
+ *   - username = ${deviceName}&${productKey}
+ *   - password = HMAC-SHA1(DeviceSecret, content)，content 按字典序拼接
+ *   - content  = "clientId${rawClientId}deviceName${deviceName}productKey${productKey}"
+ *   - broker   = ${productKey}.iot-as-mqtt.${region}.aliyuncs.com:1883
+ *
+ * 若 HMAC 不可用（CONFIG_MBEDTLS 未启用），回退到 DeviceSecret 占位密码并 LOG_WRN。
+ */
 static void aliyun_setup_auth(void)
 {
-    /* 构造阿里云 MQTT 连接参数 */
-    char username[64];
-    char client_id[128];
+    /* rawClientId：用于签名的原始 client id（不带后缀），Broker 端校验签名时用此值 */
+    const char* raw_client_id = CONFIG_GATEWAY_MQTT_CLIENT_ID;
 
+    /* 构造 MQTT clientId（含鉴权参数后缀） */
+    char client_id_full[192];
+    snprintf(client_id_full, sizeof(client_id_full),
+             "%s|securemode=3,signmethod=hmacsha1|", raw_client_id);
+
+    /* username = deviceName&productKey */
+    char username[96];
     snprintf(username, sizeof(username), "%s&%s",
              ALIYUN_DEVICE_NAME, ALIYUN_PRODUCT_KEY);
 
-    snprintf(client_id, sizeof(client_id), "%s|securemode=3,signmethod=hmacsha1|",
-             CONFIG_GATEWAY_MQTT_CLIENT_ID);
+    /* 构造签名内容（按字典序：clientId/deviceName/productKey） */
+    char content[256];
+    snprintf(content, sizeof(content),
+             "clientId%sdeviceName%sproductKey%s",
+             raw_client_id, ALIYUN_DEVICE_NAME, ALIYUN_PRODUCT_KEY);
 
-    /* TODO: Password 应为 HMAC-SHA1(DeviceSecret, content) 的 Hex 字符串。
-     * content = "clientId" + clientId + "deviceName" + deviceName + "productKey" + productKey
-     * 当前项目未启用 mbedtls，暂用 DeviceSecret 直接作为密码占位。
-     */
-    const char* password = ALIYUN_DEVICE_SECRET;
+    /* HMAC-SHA1 签名，输出 40 字符小写 hex */
+    char password[64] = {0};
+    int ret = gateway_hmac_sha1_hex(
+        (const uint8_t*)ALIYUN_DEVICE_SECRET, strlen(ALIYUN_DEVICE_SECRET),
+        (const uint8_t*)content, strlen(content),
+        password, sizeof(password));
 
+    if (ret != 0) {
+        /* HMAC 不可用（mbedtls 未启用或计算失败），回退到 DeviceSecret 占位 */
+        LOG_WRN("HMAC-SHA1 签名失败 (%d)，回退到 DeviceSecret 占位密码（仅测试用途）", ret);
+        strncpy(password, ALIYUN_DEVICE_SECRET, sizeof(password) - 1);
+        password[sizeof(password) - 1] = '\0';
+    }
+
+    /* 构造阿里云 broker 地址 */
+    char broker[128];
+    snprintf(broker, sizeof(broker),
+             "%s.iot-as-mqtt.%s.aliyuncs.com", ALIYUN_PRODUCT_KEY, ALIYUN_REGION);
+
+    /* 下发到 MQTT 层 */
+    protocol_mqtt_set_client_id(client_id_full);
     protocol_mqtt_set_auth(username, password);
+    protocol_mqtt_set_broker(broker, 1883);
 
-    LOG_INF("阿里云 MQTT 参数: clientId=%s user=%s", client_id, username);
+    LOG_INF("阿里云 MQTT 参数: clientId=%s user=%s broker=%s",
+            client_id_full, username, broker);
 }
 
 /* =============================================================================

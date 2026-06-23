@@ -58,12 +58,17 @@ static const gateway_subscription_t g_subscriptions[] = {
 	{"protocol_mqtt", EVENT_TYPE_NET_UP},
 	{"protocol_mqtt", EVENT_TYPE_NET_DOWN},
 
-	/* cloud_upload 订阅 anomaly */
+	/* cloud_upload 订阅 anomaly（实时上报） */
 	{"cloud_upload", EVENT_TYPE_ANOMALY_WARNING},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_CRITICAL},
 	{"cloud_upload", EVENT_TYPE_ANOMALY_EMERGENCY},
 
-	/* offline_cache 订阅 cloud_upload 事件和网络状态 */
+	/* cloud_upload 订阅 CLOUD_REPLAY：H1 断网续传回放——offline_cache 重播时发布
+	 * EVENT_TYPE_CLOUD_REPLAY（回放语义），由 cloud_upload 接收并直发云端，补上断链回路。
+	 * 用独立类型与 CLOUD_UPLOAD（缓存语义）分流，避免断网缓存路径触发无效重试。 */
+	{"cloud_upload", EVENT_TYPE_CLOUD_REPLAY},
+
+	/* offline_cache 订阅 CLOUD_UPLOAD（缓存语义）和网络状态；不订阅 REPLAY */
 	{"offline_cache", EVENT_TYPE_CLOUD_UPLOAD},
 	{"offline_cache", EVENT_TYPE_CLOUD_CONNECTED},
 	{"offline_cache", EVENT_TYPE_CLOUD_DISCONNECTED},

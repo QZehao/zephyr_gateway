@@ -2,24 +2,26 @@
  * @file cloud_aws.c
  * @brief AWS IoT Core Provider 实现
  *
- * 对接 AWS IoT Core，支持 X.509 证书认证、Device Shadow Topic。
+ * 对接 AWS IoT Core，支持 X.509 证书认证（双向 TLS）、Device Shadow Topic。
  *
  * MQTT 连接参数（AWS IoT Core）：
- *   - Broker:   ${endpoint}-ats.iot.${region}.amazonaws.com:8883
- *   - 端口:     8883（TLS，必须启用 CONFIG_NET_TLS + CONFIG_MBEDTLS）
- *   - 认证:     X.509 客户端证书（双向 TLS）
+ *   - Broker:   ${endpoint}-ats.iot.${region}.amazonaws.com
+ *   - 端口:     8883（TLS，CONFIG_GATEWAY_AWS_TLS=y）或 1883（明文测试，不推荐）
+ *   - 认证:     X.509 双向 TLS（不需要 username/password）
  *   - ClientId: ${thingName}
  *
+ * TLS 钩子（CONFIG_GATEWAY_AWS_TLS=y）：
+ *   - 通过 protocol_mqtt_set_tls() 传入证书 sec_tag，SNI 设置为 endpoint
+ *   - 证书实体（AmazonRootCA1 + 设备证书 + 私钥）须在部署期通过
+ *     tls_credential_add() 注入（不硬编码到固件）
+ *   - sec_tag 值由 CONFIG_GATEWAY_AWS_TLS_SEC_TAG 配置（默认 100）
+ *
  * Topic 格式：
- *   - Shadow 更新: $aws/things/${thingName}/shadow/update
+ *   - Shadow 更新:  $aws/things/${thingName}/shadow/update
  *   - Shadow delta: $aws/things/${thingName}/shadow/update/delta
  *
- * TODO:
- *   1. 启用 TLS：CONFIG_NET_TLS=y, CONFIG_MBEDTLS=y
- *   2. 加载证书链：AmazonRootCA1.pem + device-cert.pem + private-key.pem
- *   3. 配置 mqtt_client 的 transport 为 TLS
  * 参考文档:
- *   - [AWS IoT Core Protocols](https://docs.aws.amazon.com/iot/latest/developerguide/protocols.html)
+ *   - https://docs.aws.amazon.com/iot/latest/developerguide/protocols.html
  */
 
 #include "cloud_aws.h"
@@ -78,8 +80,12 @@ static void cloud_aws_print_status(const struct shell* sh)
     shell_print(sh, "    Endpoint: %s", AWS_ENDPOINT);
     shell_print(sh, "    Thing:    %s", AWS_THING_NAME);
     shell_print(sh, "    Region:   %s", AWS_REGION);
-    shell_print(sh, "    说明：需启用 TLS (CONFIG_NET_TLS + CONFIG_MBEDTLS)"
-                    "并加载 X.509 证书");
+#if defined(CONFIG_GATEWAY_AWS_TLS)
+    shell_print(sh, "    TLS：已启用（sec_tag=%d，证书须部署期注入）",
+                CONFIG_GATEWAY_AWS_TLS_SEC_TAG);
+#else
+    shell_print(sh, "    TLS：未启用（明文 1883，仅测试用途）");
+#endif
 }
 
 /* =============================================================================
@@ -106,24 +112,58 @@ const cloud_provider_t* cloud_aws_get_provider(void)
  * 内部辅助函数
  * ============================================================================= */
 
+/**
+ * @brief 配置 AWS IoT Core 连接参数（含 TLS 钩子链路）
+ *
+ * - clientId = thingName
+ * - 清除 username/password（AWS 使用证书认证，不需要）
+ * - broker = ${endpoint}-ats.iot.${region}.amazonaws.com
+ *   端口：CONFIG_GATEWAY_AWS_TLS 启用时 8883，否则 1883（仅测试）
+ * - TLS 配置（CONFIG_GATEWAY_AWS_TLS 守护）：
+ *   通过 protocol_mqtt_set_tls() 传入 sec_tag 和 SNI；
+ *   证书实体须部署期通过 tls_credential_add() 注入（此处不加载证书文件）。
+ *   TODO（部署期）：在 main 或 app_init 中调用 tls_credential_add() 加载：
+ *     TLS_CREDENTIAL_CA_CERTIFICATE   → AmazonRootCA1.pem
+ *     TLS_CREDENTIAL_SERVER_CERTIFICATE → device-cert.pem（若双向 TLS 要求）
+ *     TLS_CREDENTIAL_PRIVATE_KEY      → private-key.pem
+ */
 static void aws_setup_connection(void)
 {
-    /* TODO: 配置 TLS 传输
-     * 1. 设置 Broker 为 AWS_ENDPOINT:8883
-     * 2. 加载证书链到 mqtt_client.tls 结构
-     * 3. 设置 SNI (Server Name Indication)
-     */
+    /* clientId = thingName */
+    protocol_mqtt_set_client_id(AWS_THING_NAME);
 
-    /* 清除认证（AWS 使用证书，不需要用户名密码） */
+    /* AWS 使用证书认证，不设置 username/password */
     protocol_mqtt_set_auth(NULL, NULL);
 
-    /* TODO: 设置 TLS broker */
-    (void)AWS_ENDPOINT;
-    (void)AWS_REGION;
+#if defined(CONFIG_GATEWAY_AWS_TLS)
+    /* TLS 已启用：设置 sec_tag 和 SNI，证书实体须部署期注入 */
+    sec_tag_t tls_sec_tags[] = { CONFIG_GATEWAY_AWS_TLS_SEC_TAG };
+    int ret = protocol_mqtt_set_tls(tls_sec_tags, ARRAY_SIZE(tls_sec_tags), AWS_ENDPOINT);
+    if (ret != 0) {
+        LOG_WRN("TLS 配置失败 (%d)，回退到明文连接", ret);
+        protocol_mqtt_clear_tls();
+    }
 
-    LOG_INF("AWS IoT Core 连接参数: endpoint=%s thing=%s",
+    /* broker:8883（TLS 端口） */
+    char broker[128];
+    snprintf(broker, sizeof(broker), "%s", AWS_ENDPOINT);
+    protocol_mqtt_set_broker(broker, 8883);
+
+    LOG_INF("AWS IoT Core 连接参数: endpoint=%s thing=%s port=8883 (TLS)",
             AWS_ENDPOINT, AWS_THING_NAME);
-    LOG_WRN("AWS 当前未启用 TLS，生产环境必须配置 X.509 证书");
+    LOG_WRN("证书实体须在部署期通过 tls_credential_add() 注入 sec_tag=%d",
+            CONFIG_GATEWAY_AWS_TLS_SEC_TAG);
+#else
+    /* TLS 未启用：使用明文 1883（仅测试，AWS 生产必须启用 TLS） */
+    protocol_mqtt_clear_tls();
+    char broker[128];
+    snprintf(broker, sizeof(broker), "%s", AWS_ENDPOINT);
+    protocol_mqtt_set_broker(broker, 1883);
+
+    LOG_INF("AWS IoT Core 连接参数: endpoint=%s thing=%s port=1883 (明文)",
+            AWS_ENDPOINT, AWS_THING_NAME);
+    LOG_WRN("AWS TLS 未启用（CONFIG_GATEWAY_AWS_TLS=n），生产环境必须配置 X.509 双向 TLS");
+#endif /* CONFIG_GATEWAY_AWS_TLS */
 }
 
 /* =============================================================================

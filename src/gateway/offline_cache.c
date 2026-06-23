@@ -17,6 +17,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/storage/flash_map.h>
+#include <zephyr/sys/atomic.h>
 #include <string.h>
 
 #include <zeplod/event_system.h>
@@ -85,8 +86,8 @@ typedef struct {
     uint16_t        head;          /* 写入位置 */
     uint16_t        tail;          /* 读取位置 */
     uint16_t        count;         /* 当前条目数 */
-    /* 状态 */
-    bool            net_connected;
+    /* 状态：atomic_t 保证事件线程写、workqueue 读无竞争 */
+    atomic_t        net_connected;
     /* 统计 */
     uint32_t        write_count;
     uint32_t        read_count;
@@ -130,6 +131,9 @@ int offline_cache_init(void* config)
     k_mutex_init(&g_cache.lock);
     k_work_init_delayable(&g_cache.upload_work, cache_upload_work_handler);
 
+    /* 注册回放事件类型：重播时由本模块发布、cloud_upload 订阅直发，与 CLOUD_UPLOAD 缓存语义区分 */
+    event_register_type(EVENT_TYPE_CLOUD_REPLAY, "cloud_replay");
+
     int ret = cache_nvs_init();
     if (ret != 0) {
         LOG_ERR("NVS 初始化失败 (%d)，离线缓存模块无法启动", ret);
@@ -150,7 +154,7 @@ int offline_cache_start(void)
         return -1;
     }
     g_cache.status = MODULE_STATUS_RUNNING;
-    g_cache.net_connected = false;
+    atomic_set(&g_cache.net_connected, 0);
     LOG_INF("离线缓存模块已启动");
     return 0;
 }
@@ -249,7 +253,7 @@ static void cache_on_cloud_upload(const gateway_cloud_data_t* data)
     if (data == NULL) return;
 
     /* 如果网络已连接，不缓存（cloud_upload 会直接发送） */
-    if (g_cache.net_connected) {
+    if (atomic_get(&g_cache.net_connected) != 0) {
         return;
     }
 
@@ -258,6 +262,8 @@ static void cache_on_cloud_upload(const gateway_cloud_data_t* data)
     int ret = cache_write_entry(data->json_payload, data->data_type);
     if (ret == 0) {
         g_cache.write_count++;
+        /* M3：写入成功后立即持久化状态，消除"条目已落 NVS 但状态未更新"的掉电窗口 */
+        cache_save_state();
         LOG_DBG("离线缓存写入成功: %s", data->json_payload);
     } else {
         g_cache.overflow_count++;
@@ -271,7 +277,7 @@ static void cache_upload_work_handler(struct k_work* work)
 {
     ARG_UNUSED(work);
 
-    if (g_cache.status != MODULE_STATUS_RUNNING || !g_cache.net_connected) {
+    if (g_cache.status != MODULE_STATUS_RUNNING || atomic_get(&g_cache.net_connected) == 0) {
         return;
     }
 
@@ -292,7 +298,9 @@ static void cache_upload_work_handler(struct k_work* work)
         strncpy(data.json_payload, json, sizeof(data.json_payload) - 1);
         data.json_payload[sizeof(data.json_payload) - 1] = '\0';
 
-        event_publish_copy(EVENT_TYPE_CLOUD_UPLOAD, EVENT_PRIORITY_NORMAL,
+        /* 重播发布回放事件（REPLAY），仅 cloud_upload 订阅直发；不再发 CLOUD_UPLOAD，
+         * 避免被 offline_cache 自身的缓存路径重新捕获造成回环 */
+        event_publish_copy(EVENT_TYPE_CLOUD_REPLAY, EVENT_PRIORITY_NORMAL,
                            &data, sizeof(data));
 
         g_cache.read_count++;
@@ -311,17 +319,16 @@ static void cache_upload_work_handler(struct k_work* work)
     }
 
     /* 如果还有剩余数据，100ms 后继续上报 */
-    if (g_cache.count > 0 && g_cache.net_connected) {
+    if (g_cache.count > 0 && atomic_get(&g_cache.net_connected) != 0) {
         k_work_reschedule(&g_cache.upload_work, K_MSEC(100));
     }
 }
 
 static void cache_on_net_state(bool connected)
 {
-    bool was_connected = g_cache.net_connected;
-    g_cache.net_connected = connected;
+    atomic_val_t was_connected = atomic_set(&g_cache.net_connected, connected ? 1 : 0);
 
-    if (connected && !was_connected) {
+    if (connected && (was_connected == 0)) {
         /* 网络恢复，启动批量上报工作项 */
         LOG_INF("网络恢复，开始批量上报离线数据...");
         k_work_reschedule(&g_cache.upload_work, K_NO_WAIT);

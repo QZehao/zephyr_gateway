@@ -162,6 +162,42 @@ void cloud_upload_on_event(const event_t *event, void *user_data)
             cloud_on_anomaly((const gateway_anomaly_event_t *)gateway_event_data(event));
         }
         break;
+
+    case EVENT_TYPE_CLOUD_REPLAY:
+        /* H1 断网续传回放：offline_cache 重播时发布 EVENT_TYPE_CLOUD_REPLAY（回放专用类型），
+         * 由此分支直接转发到 cloud_provider_publish_all，绕过上传间隔限制，不再写回离线缓存。
+         * 用独立类型与 CLOUD_UPLOAD（缓存语义）分流：断网时 cloud_handle_offline_unlocked
+         * 发的是 CLOUD_UPLOAD，本分支不会被触发，杜绝无效重试与误导告警。
+         *
+         * 若回放途中网络再抖动导致直发失败，允许丢弃（条目已出缓存），LOG_WRN 记录。
+         *
+         * 锁序：先持 g_cloud.lock，再在 cloud_provider_publish_all 内部持 provider_lock，
+         * 与 cloud_on_anomaly 路径一致，无反向锁序风险。 */
+        if (event->data_len == sizeof(gateway_cloud_data_t))
+        {
+            const gateway_cloud_data_t *cd =
+                (const gateway_cloud_data_t *)gateway_event_data(event);
+            if (cd != NULL)
+            {
+                cloud_msg_type_t msg_type =
+                    (cd->data_type == 1) ? CLOUD_MSG_ANOMALY : CLOUD_MSG_TELEMETRY;
+
+                k_mutex_lock(&g_cloud.lock, K_FOREVER);
+
+                uint8_t ok = 0, fail = 0;
+                (void)cloud_provider_publish_all(msg_type, cd->json_payload, &ok, &fail);
+                if (ok > 0) {
+                    g_cloud.success_count++;
+                    LOG_DBG("离线回放上传成功: %s", cd->json_payload);
+                } else if (fail > 0) {
+                    g_cloud.fail_count++;
+                    LOG_WRN("离线回放直发失败，本条丢弃（已出缓存）");
+                }
+
+                k_mutex_unlock(&g_cloud.lock);
+            }
+        }
+        break;
     }
 }
 
@@ -180,7 +216,7 @@ int cloud_upload_control(int cmd, void *arg)
         if (arg != NULL)
         {
             uint32_t *s = (uint32_t *)arg;
-            /* stats 读取不持有锁：直接读取 uint32_t 在 ARM 上原子 */
+            /* 已持有 g_cloud.lock，stats 读取线程安全 */
             s[0] = g_cloud.success_count;
             s[1] = g_cloud.fail_count;
             s[2] = g_cloud.cached_count;

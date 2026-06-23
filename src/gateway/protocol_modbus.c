@@ -59,13 +59,13 @@ typedef struct {
     uint16_t             poll_start_addr;
     uint16_t             poll_reg_count;
     uint32_t             poll_interval_ms;
+    uint32_t             baudrate;          /**< 运行时波特率（用于帧时延计算） */
     /* 统计 */
     uint32_t             tx_count;
     uint32_t             rx_count;
     uint32_t             err_count;
-    /* 同步 */
-    struct k_sem         rx_sem;
-    struct k_mutex       tx_mutex;
+    /* 同步：bus_mutex 贯穿整笔 Modbus 事务（清空→发送→接收→解析），防止并发 */
+    struct k_mutex       bus_mutex;
 } protocol_modbus_cb_t;
 
 /* =============================================================================
@@ -104,9 +104,11 @@ int protocol_modbus_init(void* config)
     g_modbus.poll_start_addr = GATEWAY_MODBUS_REG_START_DEFAULT;
     g_modbus.poll_reg_count = GATEWAY_MODBUS_REG_COUNT_DEFAULT;
     g_modbus.poll_interval_ms = CONFIG_GATEWAY_MODBUS_POLL_INTERVAL_MS;
+    /* 从 Kconfig 取运行时波特率，用于 send_frame 帧时延计算 */
+    g_modbus.baudrate = CONFIG_GATEWAY_MODBUS_BAUDRATE;
 
-    k_sem_init(&g_modbus.rx_sem, 0, 1);
-    k_mutex_init(&g_modbus.tx_mutex);
+    /* bus_mutex：贯穿整笔事务（清空 rx → 发送 → 接收 → 解析），替代原 tx_mutex + rx_sem */
+    k_mutex_init(&g_modbus.bus_mutex);
 
     LOG_INF("Modbus 模块初始化完成");
     return 0;
@@ -168,12 +170,10 @@ int protocol_modbus_stop(void)
         return 0;
     }
 
+    /* 置位 STOPPED：工作线程在分片短睡中检查状态后自然退出（不使用 k_thread_abort）。
+     * modbus_receive_response 按 1ms 轮询，最长超时 GATEWAY_MODBUS_RX_TIMEOUT_MS(500ms)，
+     * 之后 worker 进入分片睡眠检查状态退出，join 在 ~600ms 内完成。 */
     g_modbus.status = MODULE_STATUS_STOPPED;
-
-    /* 唤醒可能阻塞在 rx_sem 的工作线程，使其能检查状态并退出 */
-    k_sem_give(&g_modbus.rx_sem);
-
-    k_thread_abort(&g_modbus.worker_thread);
     k_thread_join(&g_modbus.worker_thread, K_FOREVER);
 
     /* 停止 UART IRQ（在 worker_thread 退出后，确保无并发访问） */
@@ -247,6 +247,9 @@ int protocol_modbus_read_holding_regs(uint8_t slave_id, uint16_t start_addr,
         return -1;
     }
 
+    /* bus_mutex 贯穿整笔事务：清空 rx → 发送 → 接收 → 解析，防止并发事务交叉 */
+    k_mutex_lock(&g_modbus.bus_mutex, K_FOREVER);
+
     uint8_t req[8];
     req[0] = slave_id;
     req[1] = 0x03; /* Read Holding Registers */
@@ -259,11 +262,10 @@ int protocol_modbus_read_holding_regs(uint8_t slave_id, uint16_t start_addr,
     req[6] = (uint8_t)(crc & 0xFF);
     req[7] = (uint8_t)(crc >> 8);
 
-    /* 清空接收状态 */
+    /* 清空接收缓冲（在 bus_mutex 保护下，无并发访问） */
     g_modbus.rx_len = 0;
-    k_sem_reset(&g_modbus.rx_sem);
 
-    /* 发送请求 */
+    /* 发送请求（modbus_send_frame 在 bus_mutex 下调用，内部不再单独加锁） */
     modbus_send_frame(req, sizeof(req));
     g_modbus.tx_count++;
 
@@ -271,21 +273,24 @@ int protocol_modbus_read_holding_regs(uint8_t slave_id, uint16_t start_addr,
     size_t resp_len = 0;
     uint8_t resp[MODBUS_RX_BUF_SIZE];
     int ret = modbus_receive_response(resp, sizeof(resp), &resp_len,
-                                       K_MSEC(GATEWAY_MODBUS_RX_TIMEOUT_MS));
+                                      K_MSEC(GATEWAY_MODBUS_RX_TIMEOUT_MS));
     if (ret != 0 || resp_len < 5) {
         g_modbus.err_count++;
+        k_mutex_unlock(&g_modbus.bus_mutex);
         return ret;
     }
 
     /* 校验从站 ID 和功能码 */
     if (resp[0] != slave_id || resp[1] != 0x03) {
         g_modbus.err_count++;
+        k_mutex_unlock(&g_modbus.bus_mutex);
         return -1;
     }
 
     uint8_t byte_count = resp[2];
     if (byte_count != reg_count * 2 || resp_len < (size_t)(3 + byte_count + 2)) {
         g_modbus.err_count++;
+        k_mutex_unlock(&g_modbus.bus_mutex);
         return -1;
     }
 
@@ -293,6 +298,7 @@ int protocol_modbus_read_holding_regs(uint8_t slave_id, uint16_t start_addr,
     uint16_t resp_crc = (uint16_t)(resp[3 + byte_count] | (resp[3 + byte_count + 1] << 8));
     if (crc16_modbus(resp, 3 + byte_count) != resp_crc) {
         g_modbus.err_count++;
+        k_mutex_unlock(&g_modbus.bus_mutex);
         return -1;
     }
 
@@ -305,6 +311,7 @@ int protocol_modbus_read_holding_regs(uint8_t slave_id, uint16_t start_addr,
         }
     }
 
+    k_mutex_unlock(&g_modbus.bus_mutex);
     return 0;
 }
 
@@ -342,10 +349,18 @@ static void modbus_uart_irq_cb(const struct device* dev, void* user_data)
      * RS-485 DE 方向切换在 modbus_send_frame() 中通过延时完成。 */
 }
 
+/**
+ * @brief 发送 Modbus 帧
+ *
+ * @param data 帧数据指针
+ * @param len  帧长度（字节）
+ *
+ * @note 调用方必须持有 g_modbus.bus_mutex。本函数不再内部加锁，
+ *       帧时延按运行时 g_modbus.baudrate 计算，消除硬编码波特率假设。
+ */
 static void modbus_send_frame(const uint8_t* data, size_t len)
 {
-    k_mutex_lock(&g_modbus.tx_mutex, K_FOREVER);
-
+    /* 调用方（read_holding_regs）已持有 bus_mutex，无需重复加锁 */
     if (g_modbus.has_de_gpio && g_modbus.de_gpio != NULL) {
         gpio_pin_set_dt(g_modbus.de_gpio, 1);
         k_usleep(10); /* DE 建立时间，典型 2-10us */
@@ -355,15 +370,14 @@ static void modbus_send_frame(const uint8_t* data, size_t len)
         uart_poll_out(g_modbus.dev, data[i]);
     }
 
-    /* 等待物理发送完成：按字节数计算帧时间 + 2ms 安全余量 */
-    uint32_t frame_time_us = (uint32_t)len * MODBUS_BYTE_TIME_US(GATEWAY_MODBUS_BAUDRATE_DEFAULT) + 2000U;
+    /* 等待物理发送完成：按运行时波特率计算帧时间 + 2ms 安全余量 */
+    uint32_t baud = (g_modbus.baudrate > 0) ? g_modbus.baudrate : GATEWAY_MODBUS_BAUDRATE_DEFAULT;
+    uint32_t frame_time_us = (uint32_t)len * MODBUS_BYTE_TIME_US(baud) + 2000U;
     k_usleep(frame_time_us);
 
     if (g_modbus.has_de_gpio && g_modbus.de_gpio != NULL) {
         gpio_pin_set_dt(g_modbus.de_gpio, 0);
     }
-
-    k_mutex_unlock(&g_modbus.tx_mutex);
 }
 
 static int modbus_receive_response(uint8_t* buf, size_t buf_len,
@@ -422,6 +436,9 @@ static void modbus_worker_thread(void* p1, void* p2, void* p3)
 
     LOG_INF("Modbus 工作线程已启动");
 
+    /* 分片睡眠步长：50ms，保证 stop 后 join 在 ~50ms 内完成（在 poll 间隔结束后） */
+#define MODBUS_SLICE_MS 50
+
     while (g_modbus.status == MODULE_STATUS_RUNNING) {
         uint16_t values[16];
         int ret = protocol_modbus_read_holding_regs(
@@ -453,7 +470,11 @@ static void modbus_worker_thread(void* p1, void* p2, void* p3)
             (void)gateway_modbus_raw_publish(&mb_data);
         }
 
-        k_sleep(K_MSEC(g_modbus.poll_interval_ms));
+        /* 分片轮询：每 50ms 检查停止标志，使 stop 后快速退出 */
+        uint32_t slices = (g_modbus.poll_interval_ms + MODBUS_SLICE_MS - 1) / MODBUS_SLICE_MS;
+        for (uint32_t s = 0; s < slices && g_modbus.status == MODULE_STATUS_RUNNING; s++) {
+            k_sleep(K_MSEC(MODBUS_SLICE_MS));
+        }
     }
 
     LOG_INF("Modbus 工作线程已退出");

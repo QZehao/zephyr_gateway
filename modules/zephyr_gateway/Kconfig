@@ -137,30 +137,37 @@ config GATEWAY_CLOUD_UPLOAD_ENABLE
 
 if GATEWAY_CLOUD_UPLOAD_ENABLE
 
-config GATEWAY_CLOUD_PROVIDER_PRIVATE
-	bool "Private MQTT broker"
-	default y
+# ---------- 单活互斥：所有 provider 共用单一 MQTT 连接，同一时刻仅一个上云目标 ----------
+choice GATEWAY_CLOUD_PROVIDER
+	prompt "云平台 Provider 选择（单活互斥）"
+	default GATEWAY_CLOUD_PROVIDER_PRIVATE
 	depends on GATEWAY_MQTT_ENABLE
 	help
-	  Connect to a private/self-hosted MQTT broker using standard MQTT.
+	  选择上云目标。四个 provider 互斥单选：所有 provider 共用单一 MQTT 连接，
+	  同一时刻仅一个上云目标激活。如需切换云平台，修改此选项并重新编译。
+
+config GATEWAY_CLOUD_PROVIDER_PRIVATE
+	bool "私有 MQTT Broker"
+	help
+	  连接到自托管/私有 MQTT Broker，使用标准 MQTT 协议，无特殊认证。
 
 config GATEWAY_CLOUD_PROVIDER_ALIYUN
-	bool "Alibaba Cloud IoT"
-	depends on GATEWAY_MQTT_ENABLE
+	bool "阿里云 IoT 平台"
 	help
-	  Connect to Alibaba Cloud IoT Platform.
+	  连接阿里云物联网平台，支持一机一密 HMAC-SHA1 认证、Alink JSON 格式、物模型 Topic。
 
 config GATEWAY_CLOUD_PROVIDER_TENCENT
-	bool "Tencent Cloud IoT Hub"
-	depends on GATEWAY_MQTT_ENABLE
+	bool "腾讯云 IoT Hub"
 	help
-	  Connect to Tencent Cloud IoT Hub.
+	  连接腾讯云物联网通信平台，支持密钥认证（HMAC-SHA256）、腾讯云 Topic 格式。
 
 config GATEWAY_CLOUD_PROVIDER_AWS
 	bool "AWS IoT Core"
-	depends on GATEWAY_MQTT_ENABLE
 	help
-	  Connect to AWS IoT Core (requires TLS support).
+	  连接 AWS IoT Core，支持 X.509 证书认证（双向 TLS）、Device Shadow Topic。
+	  需同时启用 CONFIG_GATEWAY_AWS_TLS 并在部署期注入证书（sec_tag 占位）。
+
+endchoice # GATEWAY_CLOUD_PROVIDER
 
 # ---------- 阿里云 IoT 配置 ----------
 if GATEWAY_CLOUD_PROVIDER_ALIYUN
@@ -204,8 +211,11 @@ endif # GATEWAY_CLOUD_PROVIDER_TENCENT
 if GATEWAY_CLOUD_PROVIDER_AWS
 
 config GATEWAY_AWS_ENDPOINT
-	string "AWS IoT Endpoint"
+	string "AWS IoT Endpoint（不含 ':8883'）"
 	default "xxxxxx-ats.iot.us-east-1.amazonaws.com"
+	help
+	  AWS IoT 数据端点，格式为 <prefix>-ats.iot.<region>.amazonaws.com，
+	  不含端口号（端口由 TLS 开关决定：8883 或 1883）。
 
 config GATEWAY_AWS_THING_NAME
 	string "AWS Thing Name"
@@ -214,6 +224,25 @@ config GATEWAY_AWS_THING_NAME
 config GATEWAY_AWS_REGION
 	string "AWS Region"
 	default "us-east-1"
+
+config GATEWAY_AWS_TLS
+	bool "启用 AWS IoT TLS 双向认证"
+	depends on MQTT_LIB_TLS
+	depends on NET_SOCKETS_SOCKOPT_TLS
+	default n
+	help
+	  启用后通过 8883 端口以双向 TLS 连接 AWS IoT Core。
+	  需在部署期通过 tls_credential_add() 注入根 CA、设备证书、私钥，
+	  并将对应 sec_tag 配置到 CONFIG_GATEWAY_AWS_TLS_SEC_TAG。
+	  未启用时使用明文 1883 端口（仅测试用途，AWS 生产环境必须启用）。
+
+config GATEWAY_AWS_TLS_SEC_TAG
+	int "AWS TLS 证书 sec_tag"
+	depends on GATEWAY_AWS_TLS
+	default 100
+	help
+	  证书套件的 sec_tag 值（根 CA + 设备证书 + 私钥共用同一 tag，或按平台要求拆分）。
+	  证书实体须在运行时通过 tls_credential_add() 注入（部署期操作，不硬编码到固件）。
 
 endif # GATEWAY_CLOUD_PROVIDER_AWS
 

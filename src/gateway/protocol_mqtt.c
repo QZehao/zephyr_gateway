@@ -16,6 +16,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/net/mqtt.h>
 #include <zephyr/net/socket.h>
+#include <zephyr/net/tls_credentials.h>
 #include <zephyr/sys/atomic.h>
 #include <string.h>
 
@@ -58,8 +59,8 @@ typedef struct {
     uint8_t              tx_buffer[MQTT_TX_BUF_SIZE];
     /* 状态 */
     mqtt_state_t         state;
-    bool                 net_up;
-    atomic_t             pending_disconnect;
+    atomic_t             net_up;          /**< 原子标志：1=网络已就绪，0=网络断开 */
+    atomic_t             pending_disconnect; /**< 原子标志：1=需要主动断开 */
     /* 重连 */
     uint32_t             reconnect_delay_ms;
     int64_t              last_connect_attempt;
@@ -77,6 +78,15 @@ typedef struct {
     bool                 has_auth;
     struct mqtt_utf8     mqtt_user_name;
     struct mqtt_utf8     mqtt_password_utf8;
+    /* 运行时 clientId（由 cloud provider 通过 protocol_mqtt_set_client_id 设置） */
+    char                 client_id[128];
+    /* TLS 配置（CONFIG_MQTT_LIB_TLS 守护） */
+#if defined(CONFIG_MQTT_LIB_TLS)
+    bool                 use_tls;
+    sec_tag_t            sec_tags[3];
+    size_t               sec_tag_count;
+    char                 tls_hostname[64];
+#endif
     /* 同步 */
     struct k_mutex       client_mutex;
 } protocol_mqtt_cb_t;
@@ -111,11 +121,16 @@ int protocol_mqtt_init(void* config)
     g_mqtt.status = MODULE_STATUS_INITIALIZED;
     g_mqtt.state = MQTT_STATE_DISCONNECTED;
     g_mqtt.reconnect_delay_ms = RECONNECT_MIN_MS;
-    g_mqtt.pending_disconnect = false;
+    atomic_set(&g_mqtt.net_up, 0);
+    atomic_set(&g_mqtt.pending_disconnect, 0);
 
     strncpy(g_mqtt.broker_addr, CONFIG_GATEWAY_MQTT_BROKER_ADDR, sizeof(g_mqtt.broker_addr) - 1);
     g_mqtt.broker_addr[sizeof(g_mqtt.broker_addr) - 1] = '\0';
     g_mqtt.broker_port = CONFIG_GATEWAY_MQTT_BROKER_PORT;
+
+    /* 初始化 clientId：默认使用 Kconfig 中配置的值 */
+    strncpy(g_mqtt.client_id, CONFIG_GATEWAY_MQTT_CLIENT_ID, sizeof(g_mqtt.client_id) - 1);
+    g_mqtt.client_id[sizeof(g_mqtt.client_id) - 1] = '\0';
 
     k_mutex_init(&g_mqtt.client_mutex);
 
@@ -131,9 +146,9 @@ int protocol_mqtt_start(void)
     }
 
     g_mqtt.status = MODULE_STATUS_RUNNING;
-    g_mqtt.net_up = false;
+    atomic_set(&g_mqtt.net_up, 0);
     g_mqtt.state = MQTT_STATE_DISCONNECTED;
-    g_mqtt.pending_disconnect = false;
+    atomic_set(&g_mqtt.pending_disconnect, 0);
 
     k_thread_create(
         &g_mqtt.worker_thread, g_mqtt.worker_stack,
@@ -153,10 +168,11 @@ int protocol_mqtt_stop(void)
         return 0;
     }
 
+    /* 置位 STOPPED：工作线程检查状态后将自然退出循环，执行 mqtt_do_disconnect 清理 */
     g_mqtt.status = MODULE_STATUS_STOPPED;
-    atomic_set((atomic_t*)&g_mqtt.pending_disconnect, 1);
+    atomic_set(&g_mqtt.pending_disconnect, 1);
 
-    k_thread_abort(&g_mqtt.worker_thread);
+    /* 优雅等待线程自然退出（不使用 k_thread_abort，保留清理路径） */
     k_thread_join(&g_mqtt.worker_thread, K_FOREVER);
 
     LOG_INF("MQTT 模块已停止");
@@ -179,10 +195,10 @@ void protocol_mqtt_on_event(const event_t* event, void* user_data)
 
     switch (event->type) {
     case EVENT_TYPE_NET_UP:
-        atomic_cas((atomic_t*)&g_mqtt.net_up, 0, 1);
+        atomic_set(&g_mqtt.net_up, 1);
         break;
     case EVENT_TYPE_NET_DOWN:
-        atomic_cas((atomic_t*)&g_mqtt.net_up, 1, 0);
+        atomic_set(&g_mqtt.net_up, 0);
         break;
     default:
         break;
@@ -283,7 +299,7 @@ int protocol_mqtt_set_auth(const char* username, const char* password)
     k_mutex_unlock(&g_mqtt.client_mutex);
 
     /* 触发重连以应用新认证 */
-    atomic_set((atomic_t*)&g_mqtt.pending_disconnect, 1);
+    atomic_set(&g_mqtt.pending_disconnect, 1);
     return 0;
 }
 
@@ -302,9 +318,82 @@ int protocol_mqtt_set_broker(const char* addr, uint16_t port)
     LOG_INF("MQTT Broker 已设置为 %s:%u", addr, port);
 
     /* 触发重连以应用新 broker */
-    atomic_set((atomic_t*)&g_mqtt.pending_disconnect, 1);
+    atomic_set(&g_mqtt.pending_disconnect, 1);
     return 0;
 }
+
+int protocol_mqtt_set_client_id(const char* id)
+{
+    if (id == NULL || id[0] == '\0') {
+        return -EINVAL;
+    }
+
+    k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
+    strncpy(g_mqtt.client_id, id, sizeof(g_mqtt.client_id) - 1);
+    g_mqtt.client_id[sizeof(g_mqtt.client_id) - 1] = '\0';
+    k_mutex_unlock(&g_mqtt.client_mutex);
+
+    LOG_INF("MQTT clientId 已设置为: %s", g_mqtt.client_id);
+
+    /* 触发重连以应用新 clientId */
+    atomic_set(&g_mqtt.pending_disconnect, 1);
+    return 0;
+}
+
+#if defined(CONFIG_MQTT_LIB_TLS)
+int protocol_mqtt_set_tls(const sec_tag_t* tags, size_t count, const char* hostname)
+{
+    if (tags == NULL || count == 0 || count > ARRAY_SIZE(g_mqtt.sec_tags)) {
+        return -EINVAL;
+    }
+
+    k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
+    g_mqtt.use_tls = true;
+    g_mqtt.sec_tag_count = count;
+    for (size_t i = 0; i < count; i++) {
+        g_mqtt.sec_tags[i] = tags[i];
+    }
+    if (hostname != NULL) {
+        strncpy(g_mqtt.tls_hostname, hostname, sizeof(g_mqtt.tls_hostname) - 1);
+        g_mqtt.tls_hostname[sizeof(g_mqtt.tls_hostname) - 1] = '\0';
+    } else {
+        g_mqtt.tls_hostname[0] = '\0';
+    }
+    k_mutex_unlock(&g_mqtt.client_mutex);
+
+    LOG_INF("MQTT TLS 已配置: sec_tag_count=%zu hostname=%s",
+            count, hostname ? hostname : "(none)");
+    /* 触发重连以应用 TLS 配置 */
+    atomic_set(&g_mqtt.pending_disconnect, 1);
+    return 0;
+}
+
+void protocol_mqtt_clear_tls(void)
+{
+    k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
+    g_mqtt.use_tls = false;
+    g_mqtt.sec_tag_count = 0;
+    g_mqtt.tls_hostname[0] = '\0';
+    k_mutex_unlock(&g_mqtt.client_mutex);
+
+    LOG_INF("MQTT TLS 已清除，切换为明文连接");
+    atomic_set(&g_mqtt.pending_disconnect, 1);
+}
+#else /* !CONFIG_MQTT_LIB_TLS */
+int protocol_mqtt_set_tls(const sec_tag_t* tags, size_t count, const char* hostname)
+{
+    ARG_UNUSED(tags);
+    ARG_UNUSED(count);
+    ARG_UNUSED(hostname);
+    LOG_WRN("CONFIG_MQTT_LIB_TLS 未启用，TLS 不可用");
+    return -ENOTSUP;
+}
+
+void protocol_mqtt_clear_tls(void)
+{
+    /* TLS 未启用，无操作 */
+}
+#endif /* CONFIG_MQTT_LIB_TLS */
 
 /* =============================================================================
  * 内部函数
@@ -320,15 +409,15 @@ static void mqtt_worker_thread(void* p1, void* p2, void* p3)
 
     while (g_mqtt.status == MODULE_STATUS_RUNNING) {
         /* 处理回调或设置变更请求的断开 */
-        if (atomic_cas((atomic_t*)&g_mqtt.pending_disconnect, 1, 0)) {
+        if (atomic_cas(&g_mqtt.pending_disconnect, 1, 0)) {
             mqtt_do_disconnect();
         }
 
-        if (!g_mqtt.net_up) {
+        if (atomic_get(&g_mqtt.net_up) == 0) {
             if (g_mqtt.state != MQTT_STATE_DISCONNECTED) {
                 mqtt_do_disconnect();
             }
-            k_sleep(K_MSEC(100));
+            k_sleep(K_MSEC(50));
             continue;
         }
 
@@ -393,8 +482,9 @@ static int mqtt_do_connect(void)
 
     g_mqtt.client.broker = &g_mqtt.broker;
     g_mqtt.client.evt_cb = mqtt_evt_handler;
-    g_mqtt.client.client_id.utf8 = (uint8_t*)CONFIG_GATEWAY_MQTT_CLIENT_ID;
-    g_mqtt.client.client_id.size = strlen(CONFIG_GATEWAY_MQTT_CLIENT_ID);
+    /* 使用运行时 clientId（可由 cloud provider 通过 protocol_mqtt_set_client_id 设置） */
+    g_mqtt.client.client_id.utf8 = (uint8_t*)g_mqtt.client_id;
+    g_mqtt.client.client_id.size = strlen(g_mqtt.client_id);
     g_mqtt.client.protocol_version = MQTT_VERSION_3_1_1;
     g_mqtt.client.rx_buf = g_mqtt.rx_buffer;
     g_mqtt.client.rx_buf_size = sizeof(g_mqtt.rx_buffer);
@@ -424,6 +514,28 @@ static int mqtt_do_connect(void)
         g_mqtt.client.user_name = &g_mqtt.mqtt_user_name;
         g_mqtt.client.password = &g_mqtt.mqtt_password_utf8;
     }
+
+    /* TLS 传输配置（仅在 CONFIG_MQTT_LIB_TLS 启用且 use_tls 置位时生效） */
+#if defined(CONFIG_MQTT_LIB_TLS)
+    k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
+    bool use_tls = g_mqtt.use_tls;
+    k_mutex_unlock(&g_mqtt.client_mutex);
+
+    if (use_tls) {
+        g_mqtt.client.transport.type = MQTT_TRANSPORT_SECURE;
+        struct mqtt_sec_config* tls_cfg = &g_mqtt.client.transport.tls.config;
+        tls_cfg->peer_verify = TLS_PEER_VERIFY_REQUIRED;
+        tls_cfg->cipher_list  = NULL;  /* 使用默认加密套件 */
+        tls_cfg->sec_tag_list = g_mqtt.sec_tags;
+        tls_cfg->sec_tag_count = g_mqtt.sec_tag_count;
+        tls_cfg->hostname     = g_mqtt.tls_hostname[0] ? g_mqtt.tls_hostname : NULL;
+        LOG_INF("MQTT TLS 已启用，hostname=%s", g_mqtt.tls_hostname);
+    } else {
+        g_mqtt.client.transport.type = MQTT_TRANSPORT_NON_SECURE;
+    }
+#else
+    g_mqtt.client.transport.type = MQTT_TRANSPORT_NON_SECURE;
+#endif /* CONFIG_MQTT_LIB_TLS */
 
     ret = mqtt_connect(&g_mqtt.client);
     if (ret != 0) {
@@ -466,7 +578,7 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
     case MQTT_EVT_CONNACK:
         if (evt->result != 0) {
             LOG_ERR("MQTT CONNACK 错误: %d", evt->result);
-            atomic_set((atomic_t*)&g_mqtt.pending_disconnect, 1);
+            atomic_set(&g_mqtt.pending_disconnect, 1);
             break;
         }
         g_mqtt.state = MQTT_STATE_CONNECTED;
@@ -474,11 +586,13 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
         g_mqtt.reconnect_delay_ms = RECONNECT_MIN_MS;
         LOG_INF("MQTT 已连接");
 
-        /* 订阅命令主题 */
+        /* 订阅命令主题（使用运行时 clientId，拼接到静态缓冲）*/
+        static char cmd_topic[160];
+        snprintf(cmd_topic, sizeof(cmd_topic), "gateway/cmd/%s", g_mqtt.client_id);
         struct mqtt_topic topic = {
             .topic = {
-                .utf8 = (uint8_t*)"gateway/cmd/" CONFIG_GATEWAY_MQTT_CLIENT_ID,
-                .size = strlen("gateway/cmd/" CONFIG_GATEWAY_MQTT_CLIENT_ID),
+                .utf8 = (uint8_t*)cmd_topic,
+                .size = strlen(cmd_topic),
             },
             .qos = MQTT_QOS_0_AT_MOST_ONCE,
         };
@@ -489,7 +603,7 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
         ret = mqtt_subscribe(client, &sub_list);
         if (ret != 0) {
             LOG_WRN("MQTT 订阅失败: %d", ret);
-            atomic_set((atomic_t*)&g_mqtt.pending_disconnect, 1);
+            atomic_set(&g_mqtt.pending_disconnect, 1);
             break;
         }
         g_mqtt.state = MQTT_STATE_SUBSCRIBED;

@@ -35,7 +35,9 @@ extern "C" {
 #define EVENT_TYPE_CLOUD_DISCONNECTED 121
 
 /* 数据上云 */
-#define EVENT_TYPE_CLOUD_UPLOAD       130  /* 需要上云的数据（离线缓存用） */
+#define EVENT_TYPE_CLOUD_UPLOAD       130  /* 缓存语义：需缓存到 NVS 的数据，仅 offline_cache 订阅 */
+#define EVENT_TYPE_CLOUD_REPLAY       131  /* 回放语义：离线缓存重播专用，仅 cloud_upload 订阅直发，
+                                            * 与 CLOUD_UPLOAD（缓存语义）严格区分，避免重复尝试 */
 
 /* =============================================================================
  * 数据载荷结构 (Event Payload Structures)
@@ -75,8 +77,12 @@ typedef struct {
 typedef struct {
     uint32_t timestamp;
     uint8_t  data_type;       /* 0=传感器, 1=异常, 2=心跳 */
-    char     json_payload[192]; /* 轻量 JSON（196B > 48B inline，永远走 ptr 分配） */
+    char     json_payload[192]; /* 轻量 JSON（sizeof==197B > 48B inline，永远走 ptr 分配） */
 } gateway_cloud_data_t;
+
+/* 结构体大小上限断言：确保 event_publish_copy 不会超出最大 slab 桶 */
+_Static_assert(sizeof(gateway_cloud_data_t) <= 256,
+               "gateway_cloud_data_t 超过 256B slab 桶上限，请调整 json_payload 大小");
 
 /** CAN 帧原始数据 */
 typedef struct {
