@@ -10,7 +10,7 @@
 #include "protocol_modbus.h"
 #include "gateway_events.h"
 #include "gateway_config.h"
-#include "app_config.h"
+#include <zeplod/app_config.h>
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -21,8 +21,8 @@
 #include <zephyr/logging/log.h>
 #include <string.h>
 
-#include "event_system.h"
-#include "module_manager.h"
+#include <zeplod/event_system.h>
+#include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(protocol_modbus, CONFIG_SYS_LOG_LEVEL);
 

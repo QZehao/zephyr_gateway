@@ -9,7 +9,7 @@
 #include "cloud_private.h"
 #include "protocol_mqtt.h"
 #include "gateway_config.h"
-#include "app_config.h"
+#include <zeplod/app_config.h>
 
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
@@ -17,7 +17,7 @@
 #include <zephyr/shell/shell.h>
 #include <string.h>
 
-#include "module_manager.h"
+#include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(cloud_private, CONFIG_SYS_LOG_LEVEL);
 

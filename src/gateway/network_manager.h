@@ -9,7 +9,7 @@
 #ifndef NETWORK_MANAGER_H
 #define NETWORK_MANAGER_H
 
-#include "module_base.h"
+#include <zeplod/module_base.h>
 #include <stdbool.h>
 #include <stdint.h>
 

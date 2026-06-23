@@ -8,7 +8,7 @@
 
 #include "data_simulator.h"
 #include "gateway_config.h"
-#include "app_config.h"
+#include <zeplod/app_config.h>
 
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
@@ -20,8 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "event_system.h"
-#include "module_manager.h"
+#include <zeplod/event_system.h>
+#include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(data_simulator, CONFIG_SYS_LOG_LEVEL);
 

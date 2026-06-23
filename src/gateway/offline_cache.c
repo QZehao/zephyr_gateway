@@ -9,7 +9,7 @@
 #include "offline_cache.h"
 #include "gateway_events.h"
 #include "gateway_config.h"
-#include "app_config.h"
+#include <zeplod/app_config.h>
 
 #include <zephyr/drivers/flash.h>
 #include <zephyr/fs/nvs.h>
@@ -19,8 +19,8 @@
 #include <zephyr/storage/flash_map.h>
 #include <string.h>
 
-#include "event_system.h"
-#include "module_manager.h"
+#include <zeplod/event_system.h>
+#include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(offline_cache, CONFIG_SYS_LOG_LEVEL);
 

@@ -1,6 +1,7 @@
 zephyr_library()
 
 zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../src/gateway)
+zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../framework/include)
 zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../framework/src/modules)
 zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../framework/src/core)
 zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../../framework/src/services)

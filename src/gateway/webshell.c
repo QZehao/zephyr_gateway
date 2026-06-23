@@ -9,7 +9,7 @@
 #include "webshell.h"
 #include "gateway_events.h"
 #include "gateway_config.h"
-#include "app_config.h"
+#include <zeplod/app_config.h>
 
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
@@ -19,8 +19,8 @@
 #include <string.h>
 #include <math.h>
 
-#include "event_system.h"
-#include "module_manager.h"
+#include <zeplod/event_system.h>
+#include <zeplod/module_manager.h>
 
 /* 条件 include：模块禁用时避免引用未编译的符号 */
 #if GATEWAY_CAN_ENABLE

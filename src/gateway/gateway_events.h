@@ -101,7 +101,7 @@ typedef struct {
  * 事件数据访问辅助
  * ============================================================================= */
 
-#include "event_system.h"
+#include <zeplod/event_system.h>
 
 /** 安全获取事件数据指针（自动处理 inline / ptr 模式） */
 static inline const void* gateway_event_data(const event_t* evt)
@@ -133,7 +133,7 @@ const char* gateway_anomaly_level_str(uint8_t level);
  * Data Bus 通道与 Publish Helper
  * ============================================================================= */
 
-#include "data_bus.h"
+#include <zeplod/data_bus.h>
 
 /** 全局通道句柄；由 gateway_events.c 在 SYS_INIT(APPLICATION, 68) 阶段创建。
  *  若 data_bus 初始化失败或通道池耗尽，对应句柄保持 NULL，helper 返回 -ENODEV。 */

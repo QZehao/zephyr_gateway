@@ -8,7 +8,7 @@
 #ifndef PROTOCOL_MQTT_H
 #define PROTOCOL_MQTT_H
 
-#include "module_base.h"
+#include <zeplod/module_base.h>
 #include <stdbool.h>
 #include <stdint.h>
 

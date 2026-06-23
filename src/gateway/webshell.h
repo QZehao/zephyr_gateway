@@ -6,7 +6,7 @@
 #ifndef WEBSHELL_H
 #define WEBSHELL_H
 
-#include "module_base.h"
+#include <zeplod/module_base.h>
 
 #ifdef __cplusplus
 extern "C" {

@@ -6,7 +6,7 @@
 #ifndef OFFLINE_CACHE_H
 #define OFFLINE_CACHE_H
 
-#include "module_base.h"
+#include <zeplod/module_base.h>
 #include <stdint.h>
 
 #ifdef __cplusplus

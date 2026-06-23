@@ -16,7 +16,7 @@
 #include "cloud_upload.h"
 #include "offline_cache.h"
 #include "webshell.h"
-#include "app_config.h"
+#include <zeplod/app_config.h>
 
 #if GATEWAY_CLOUD_PROVIDER_PRIVATE
 #include "cloud_private.h"
@@ -36,8 +36,8 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/logging/log.h>
 
-#include "event_system.h"
-#include "module_manager.h"
+#include <zeplod/event_system.h>
+#include <zeplod/module_manager.h>
 
 LOG_MODULE_REGISTER(gateway_init, CONFIG_SYS_LOG_LEVEL);
 

@@ -6,7 +6,7 @@
 #ifndef PROTOCOL_CAN_H
 #define PROTOCOL_CAN_H
 
-#include "module_base.h"
+#include <zeplod/module_base.h>
 #include <stdint.h>
 
 #ifdef __cplusplus

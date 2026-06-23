@@ -6,7 +6,7 @@
 #ifndef PROTOCOL_MODBUS_H
 #define PROTOCOL_MODBUS_H
 
-#include "module_base.h"
+#include <zeplod/module_base.h>
 #include <stdint.h>
 #include <stddef.h>
 
