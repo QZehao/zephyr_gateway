@@ -25,6 +25,22 @@ LOG_MODULE_REGISTER(cloud_crypto, CONFIG_SYS_LOG_LEVEL);
 #if defined(CONFIG_MBEDTLS)
 
 #include <mbedtls/md.h>
+#include <psa/crypto.h>
+
+/**
+ * @brief 将 mbedtls MD 类型映射为 PSA HMAC 算法
+ */
+static psa_algorithm_t md_type_to_psa_hmac_alg(mbedtls_md_type_t md_type)
+{
+    switch (md_type) {
+    case MBEDTLS_MD_SHA1:
+        return PSA_ALG_HMAC(PSA_ALG_SHA_1);
+    case MBEDTLS_MD_SHA256:
+        return PSA_ALG_HMAC(PSA_ALG_SHA_256);
+    default:
+        return 0;
+    }
+}
 
 /**
  * @brief 通用 HMAC 计算，输出小写十六进制字符串
@@ -36,7 +52,7 @@ LOG_MODULE_REGISTER(cloud_crypto, CONFIG_SYS_LOG_LEVEL);
  * @param msg_len   消息长度（字节）
  * @param out_hex   输出缓冲（调用方保证足够大）
  * @param out_size  输出缓冲大小
- * @return 0 成功；-EINVAL 参数无效；-EIO mbedtls 计算失败
+ * @return 0 成功；-EINVAL 参数无效；-EIO 加密计算失败
  */
 static int hmac_to_hex(mbedtls_md_type_t md_type,
                         const uint8_t* key, size_t key_len,
@@ -48,37 +64,56 @@ static int hmac_to_hex(mbedtls_md_type_t md_type,
         return -EINVAL;
     }
 
-    const mbedtls_md_info_t* md_info = mbedtls_md_info_from_type(md_type);
-    if (md_info == NULL) {
-        LOG_ERR("mbedtls_md_info_from_type 失败，MD 类型 %d 不支持", (int)md_type);
-        return -EIO;
+    psa_algorithm_t alg = md_type_to_psa_hmac_alg(md_type);
+    if (alg == 0) {
+        LOG_ERR("不支持的 MD 类型 %d", (int)md_type);
+        return -EINVAL;
     }
 
     /* 确认输出缓冲足够容纳十六进制字符串 */
-    size_t digest_size = (size_t)mbedtls_md_get_size(md_info);
+    size_t digest_size = PSA_MAC_LENGTH(PSA_KEY_TYPE_HMAC, key_len * 8, alg);
     size_t hex_need = digest_size * 2 + 1; /* 每字节两个 hex 字符 + NUL */
     if (out_size < hex_need) {
         LOG_ERR("输出缓冲不足：需要 %zu 字节，实际 %zu 字节", hex_need, out_size);
         return -EINVAL;
     }
 
+    psa_status_t status = psa_crypto_init();
+    if (status != PSA_SUCCESS) {
+        LOG_ERR("psa_crypto_init 失败: %d", (int)status);
+        return -EIO;
+    }
+
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_MESSAGE);
+    psa_set_key_algorithm(&attributes, alg);
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_HMAC);
+    psa_set_key_bits(&attributes, key_len * 8);
+
+    mbedtls_svc_key_id_t key_id;
+    status = psa_import_key(&attributes, key, key_len, &key_id);
+    if (status != PSA_SUCCESS) {
+        LOG_ERR("psa_import_key 失败: %d", (int)status);
+        return -EIO;
+    }
+
     uint8_t digest[32]; /* SHA256=32B，SHA1=20B，此数组均满足 */
-    int ret = mbedtls_md_hmac(md_info,
-                               key, key_len,
-                               msg, msg_len,
-                               digest);
-    if (ret != 0) {
-        LOG_ERR("mbedtls_md_hmac 失败: %d", ret);
+    size_t mac_length = 0;
+    status = psa_mac_compute(key_id, alg, msg, msg_len,
+                             digest, sizeof(digest), &mac_length);
+    psa_destroy_key(key_id);
+    if (status != PSA_SUCCESS) {
+        LOG_ERR("psa_mac_compute 失败: %d", (int)status);
         return -EIO;
     }
 
     /* 转换为小写十六进制字符串 */
     static const char hex_chars[] = "0123456789abcdef";
-    for (size_t i = 0; i < digest_size; i++) {
+    for (size_t i = 0; i < mac_length; i++) {
         out_hex[i * 2]     = hex_chars[(digest[i] >> 4) & 0x0F];
         out_hex[i * 2 + 1] = hex_chars[digest[i] & 0x0F];
     }
-    out_hex[digest_size * 2] = '\0';
+    out_hex[mac_length * 2] = '\0';
 
     return 0;
 }

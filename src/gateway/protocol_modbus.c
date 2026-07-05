@@ -330,9 +330,7 @@ static void modbus_uart_irq_cb(const struct device* dev, void* user_data)
 {
     protocol_modbus_cb_t* cb = (protocol_modbus_cb_t*)user_data;
 
-    if (!uart_irq_update(dev)) {
-        return;
-    }
+    uart_irq_update(dev);
 
     while (uart_irq_rx_ready(dev)) {
         uint8_t byte;
