@@ -1,0 +1,6 @@
+board:
+  name: esp32c6_devkitm
+  full_name: ESP32-C6-DevKitM-1
+  vendor: espressif
+  socs:
+    - name: esp32c6

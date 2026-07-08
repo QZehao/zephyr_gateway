@@ -1,0 +1,24 @@
+identifier: esp32c6_devkitm/esp32c6/hpcore
+name: Espressif ESP32-C6-DevKitM-1 v1.0 HP Core
+vendor: espressif
+type: mcu
+arch: riscv
+toolchain:
+  - zephyr
+supported:
+  - adc
+  - gpio
+  - watchdog
+  - uart
+  - can
+  - dma
+  - pwm
+  - spi
+  - counter
+  - entropy
+  - i2c
+  - netif:wifi
+  - netif:openthread
+testing:
+  ignore_tags:
+    - bluetooth

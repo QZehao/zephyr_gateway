@@ -1,0 +1,71 @@
+/**
+ * ESP32-C6-DevKitM-1 v1.0 pinctrl
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/dt-bindings/pinctrl/esp32c6-pinctrl.h>
+
+&pinctrl {
+	/* USB-Serial: U0TXD=GPIO16, U0RXD=GPIO17 */
+	uart0_default: uart0_default {
+		group1 {
+			pinmux = <UART0_TX_GPIO16>;
+			output-high;
+		};
+
+		group2 {
+			pinmux = <UART0_RX_GPIO17>;
+			bias-pull-up;
+		};
+	};
+
+	/* RS-485 / Modbus RTU: UART1 TX=GPIO7, RX=GPIO6 */
+	uart1_default: uart1_default {
+		group1 {
+			pinmux = <UART1_TX_GPIO7>;
+			output-high;
+		};
+
+		group2 {
+			pinmux = <UART1_RX_GPIO6>;
+			bias-pull-up;
+		};
+	};
+
+	/* TWAI/CAN: TX=GPIO5, RX=GPIO4 */
+	twai0_default: twai0_default {
+		group1 {
+			pinmux = <TWAI0_TX_GPIO5>;
+			output-high;
+		};
+
+		group2 {
+			pinmux = <TWAI0_RX_GPIO4>;
+			bias-pull-up;
+		};
+	};
+
+	i2c0_default: i2c0_default {
+		group1 {
+			pinmux = <I2C0_SDA_GPIO14>,
+				 <I2C0_SCL_GPIO15>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
+
+	spim2_default: spim2_default {
+		group1 {
+			pinmux = <SPIM2_MISO_GPIO0>,
+				 <SPIM2_SCLK_GPIO2>,
+				 <SPIM2_CSEL_GPIO3>;
+		};
+
+		group2 {
+			pinmux = <SPIM2_MOSI_GPIO1>;
+			output-low;
+		};
+	};
+};

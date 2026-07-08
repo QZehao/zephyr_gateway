@@ -128,6 +128,7 @@ west build -b nucleo_l4r5zi -d build . -DCONFIG_GATEWAY_CLOUD_PROVIDER_PRIVATE=y
 
 ```powershell
 .\scripts\build.ps1 -Board nucleo_l4r5zi
+.\scripts\build.ps1 -Board esp32c6_devkitm -BuildDir build_esp32c6
 ```
 
 ---

@@ -10,9 +10,19 @@ if(NOT CONF_FILE)
       CACHE STRING "Zephyr application config files" FORCE)
 endif()
 
+# 为 ESP32-C6-DevKitM-1 默认选中 HP Core；如需 LP Core 仍可使用完整 target
+if(DEFINED BOARD AND BOARD STREQUAL "esp32c6_devkitm")
+  set(BOARD "esp32c6_devkitm/esp32c6/hpcore" CACHE STRING "Board" FORCE)
+  message(STATUS "zeplod: defaulting board 'esp32c6_devkitm' to '${BOARD}'")
+endif()
+
 # framework/app.overlay 面向 STM32 等实板 SRAM；QEMU/native_sim 改用 framework/boards/*.overlay
 include(${CMAKE_CURRENT_LIST_DIR}/framework/cmake/zeplod_app_overlays.cmake)
-zeplod_append_app_devicetree_overlays("${CMAKE_CURRENT_LIST_DIR}")
+if(DEFINED BOARD AND BOARD MATCHES "^esp32")
+  message(STATUS "zeplod: skip framework/app.overlay for ESP32 board '${BOARD}'")
+else()
+  zeplod_append_app_devicetree_overlays("${CMAKE_CURRENT_LIST_DIR}")
+endif()
 
 if(NOT DEFINED ENV{ZEPHYR_EXTRA_MODULES} OR "$ENV{ZEPHYR_EXTRA_MODULES}" STREQUAL "")
   set(ENV{ZEPHYR_EXTRA_MODULES} "${CMAKE_CURRENT_LIST_DIR}/modules/zephyr_gateway")
@@ -40,6 +50,9 @@ if(NOT DEFINED ENV{ZEPHYR_BASE})
 endif()
 
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+# 允许在仓库根目录 boards/ 下放置自定义板级定义（如 ESP32-C6-DevKitM-1）
+list(APPEND BOARD_ROOT ${CMAKE_CURRENT_LIST_DIR})
 
 # 版本：优先应用仓库根目录 APP_VERSION；否则使用 framework/APP_VERSION；再无则默认 1.0.0
 if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/APP_VERSION")

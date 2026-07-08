@@ -1,0 +1,7 @@
+# ESP32-C6-DevKitM-1 board configuration
+#
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_ESP32C6_DEVKITM
+	select SOC_ESP32_C6_WROOM_1U_N4
+	select SOC_ESP32C6_HPCORE if BOARD_ESP32C6_DEVKITM_ESP32C6_HPCORE

@@ -1,0 +1,33 @@
+/**
+ * ESP32-C6-DevKitM-1 v1.0 设备树 overlay（HP Core）
+ * TWAI (Classic CAN) + UART1(RS-485/Modbus RTU)
+ *
+ * 用法示例：
+ *   west build -b esp32c6_devkitm -d build_esp32c6 .
+ * 或显式指定核心：
+ *   west build -b esp32c6_devkitm/esp32c6/hpcore -d build_esp32c6 .
+ */
+
+/* TWAI0: Classic CAN，125 kbps，TX=GPIO5, RX=GPIO4 */
+&twai0 {
+	status = "okay";
+	bus-speed = <125000>;
+	pinctrl-0 = <&twai0_default>;
+	pinctrl-names = "default";
+};
+
+/* UART1: RS-485 / Modbus RTU，默认 9600，TX=GPIO7, RX=GPIO6 */
+&uart1 {
+	status = "okay";
+	current-speed = <9600>;
+	pinctrl-0 = <&uart1_default>;
+	pinctrl-names = "default";
+};
+
+/* aliases：与 framework/gateway 业务代码命名保持一致 */
+/ {
+	aliases {
+		can0 = &twai0;
+		rs485-uart = &uart1;
+	};
+};
