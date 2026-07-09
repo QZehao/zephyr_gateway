@@ -126,22 +126,33 @@ west build -b nucleo_l4r5zi -d build . -DCONFIG_GATEWAY_CLOUD_PROVIDER_PRIVATE=y
 
 ### ESP32-C6-DevKitM-1（原生 Wi-Fi）
 
+> 首次构建前需一次性拉取乐鑫 Wi-Fi/BLE 闭源 blob：`west blobs fetch hal_espressif`
+> （若报 `429 Too Many Requests`，属临时限流，增量重试即可）。
+
+推荐用脚本，一行即可（自动叠加 Wi-Fi conf，并生成可直接烧 `0x0` 的合并镜像 `zephyr_flash_0x0.bin`）：
+
 ```powershell
-west build -b esp32c6_devkitm -d build_esp32c6 . `
-  -- -DEXTRA_CONF_FILE=boards/esp32c6_devkitm_esp32c6_hpcore.conf
+.\scripts\build.ps1 -Board esp32c6_devkitm -BuildDir build_esp32c6
+```
+
+或直接用 `west`（`-D` 参数须加单引号，否则 PowerShell 会在 `.conf` 处误拆参数）：
+
+```powershell
+west build -b esp32c6_devkitm -d build_esp32c6 . -p always -- '-DEXTRA_CONF_FILE=boards/esp32c6_devkitm_esp32c6_hpcore.conf'
 ```
 
 `boards/esp32c6_devkitm_esp32c6_hpcore.conf` 开启 `CONFIG_WIFI` / `CONFIG_CONNECTIVITY_BACKEND_WIFI` /
-`CONFIG_PROVISIONING_SHELL` 等，详见文件头注释。烧录后用 `prov set-wifi <ssid> <psk>` 注入凭据（持久化到 NVS），
+`CONFIG_PROVISIONING_SHELL` 等，详见文件头注释。ESP32-C6 为 Simple Boot，`zephyr.bin` 已含镜像头，
+烧录用 `esptool --chip esp32c6 write-flash 0x0 build_esp32c6\zephyr\zephyr_flash_0x0.bin`。
+烧录后用 `prov set-wifi <ssid> <psk>` 注入凭据（持久化到 NVS），
 再调用 `connectivity_module_connect(CONNECTIVITY_LINK_WIFI)`（或对应业务入口）发起连接。
 
 ### PowerShell 脚本
 
 ```powershell
 .\scripts\build.ps1 -Board nucleo_l4r5zi
+# esp32c6_devkitm 会自动叠加 Wi-Fi conf 并生成 0x0 合并镜像，无需手动传 -WestExtra
 .\scripts\build.ps1 -Board esp32c6_devkitm -BuildDir build_esp32c6
-.\scripts\build.ps1 -Board esp32c6_devkitm -BuildDir build_esp32c6 `
-  -WestExtra @("--","-DEXTRA_CONF_FILE=boards/esp32c6_devkitm_esp32c6_hpcore.conf")
 ```
 
 ---
