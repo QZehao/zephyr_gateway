@@ -124,11 +124,24 @@ west build -b nucleo_l4r5zi -d build . -DCONFIG_GATEWAY_CLOUD_PROVIDER_PRIVATE=n
 west build -b nucleo_l4r5zi -d build . -DCONFIG_GATEWAY_CLOUD_PROVIDER_PRIVATE=y -DCONFIG_GATEWAY_CLOUD_PROVIDER_ALIYUN=y -DCONFIG_GATEWAY_CLOUD_PROVIDER_TENCENT=y
 ```
 
+### ESP32-C6-DevKitM-1（原生 Wi-Fi）
+
+```powershell
+west build -b esp32c6_devkitm -d build_esp32c6 . `
+  -- -DEXTRA_CONF_FILE=boards/esp32c6_devkitm_esp32c6_hpcore.conf
+```
+
+`boards/esp32c6_devkitm_esp32c6_hpcore.conf` 开启 `CONFIG_WIFI` / `CONFIG_CONNECTIVITY_BACKEND_WIFI` /
+`CONFIG_PROVISIONING_SHELL` 等，详见文件头注释。烧录后用 `prov set-wifi <ssid> <psk>` 注入凭据（持久化到 NVS），
+再调用 `connectivity_module_connect(CONNECTIVITY_LINK_WIFI)`（或对应业务入口）发起连接。
+
 ### PowerShell 脚本
 
 ```powershell
 .\scripts\build.ps1 -Board nucleo_l4r5zi
 .\scripts\build.ps1 -Board esp32c6_devkitm -BuildDir build_esp32c6
+.\scripts\build.ps1 -Board esp32c6_devkitm -BuildDir build_esp32c6 `
+  -WestExtra @("--","-DEXTRA_CONF_FILE=boards/esp32c6_devkitm_esp32c6_hpcore.conf")
 ```
 
 ---
