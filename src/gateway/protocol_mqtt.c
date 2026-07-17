@@ -132,6 +132,12 @@ int protocol_mqtt_init(void* config)
     strncpy(g_mqtt.client_id, CONFIG_GATEWAY_MQTT_CLIENT_ID, sizeof(g_mqtt.client_id) - 1);
     g_mqtt.client_id[sizeof(g_mqtt.client_id) - 1] = '\0';
 
+    /* 注册本模块发布的云连接状态事件类型；缺失注册会导致 event_subscribe()
+     * 和 event_publish_copy() 均返回 EVENT_ERR_NOT_FOUND（见 event_system_publish.c
+     * 的 event_publish_common() 与 event_system_pubsub.c 的 event_subscribe()）。 */
+    event_register_type(EVENT_TYPE_CLOUD_CONNECTED, "cloud_connected");
+    event_register_type(EVENT_TYPE_CLOUD_DISCONNECTED, "cloud_disconnected");
+
     k_mutex_init(&g_mqtt.client_mutex);
 
     LOG_INF("MQTT 模块初始化完成");
