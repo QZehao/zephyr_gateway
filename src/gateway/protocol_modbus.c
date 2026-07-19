@@ -146,10 +146,18 @@ int protocol_modbus_start(void)
     g_modbus.has_de_gpio = false;
 #endif
 
-    /* 注册 UART IRQ 回调 */
-    if (uart_irq_callback_user_data_set(g_modbus.dev, modbus_uart_irq_cb, &g_modbus) == 0) {
-        uart_irq_rx_enable(g_modbus.dev);
+    /* 注册 UART IRQ 回调：失败时必须终止启动而非降级静默运行——modbus_receive_response()
+     * 完全依赖 IRQ 回调向 rx_buf 填充数据，回调注册失败意味着后续所有事务的
+     * 响应都收不到，只会在 GATEWAY_MODBUS_RX_TIMEOUT_MS 后静默超时，表现为
+     * “模块看起来在跑但数据永远拿不到”，故置 ERROR 并返回错误码，让
+     * module_manager 按启动失败处理（不创建 worker 线程）。 */
+    int uart_irq_ret = uart_irq_callback_user_data_set(g_modbus.dev, modbus_uart_irq_cb, &g_modbus);
+    if (uart_irq_ret != 0) {
+        LOG_ERR("Modbus UART IRQ 回调注册失败: %d", uart_irq_ret);
+        g_modbus.status = MODULE_STATUS_ERROR;
+        return uart_irq_ret;
     }
+    uart_irq_rx_enable(g_modbus.dev);
 
     g_modbus.status = MODULE_STATUS_RUNNING;
 
@@ -229,7 +237,18 @@ int protocol_modbus_control(int cmd, void* arg)
         if (arg == NULL) {
             return -1;
         }
-        g_modbus.poll_interval_ms = *(uint32_t*)arg;
+        {
+            uint32_t interval_ms = *(uint32_t*)arg;
+            /* 拒绝过小的轮询间隔：worker 线程按 MODBUS_SLICE_MS(50ms) 分片睡眠，
+             * slices = ceil(interval_ms / 50)，interval_ms=0 会使 slices=0，
+             * 分片循环完全不执行、线程完全不睡眠，疯狂重发请求刷爆总线。
+             * 50ms 与分片粒度一致，是可接受的最小值。 */
+            if (interval_ms < 50U) {
+                LOG_ERR("Modbus 轮询间隔过小: %u ms (最小 50ms)", interval_ms);
+                return -EINVAL;
+            }
+            g_modbus.poll_interval_ms = interval_ms;
+        }
         return 0;
     default:
         return -1;

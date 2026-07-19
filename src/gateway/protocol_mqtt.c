@@ -9,6 +9,7 @@
 #include "protocol_mqtt.h"
 #include "gateway_events.h"
 #include "gateway_config.h"
+#include "network_manager.h"
 #include <zeplod/app_config.h>
 
 #include <zephyr/init.h>
@@ -81,6 +82,13 @@ typedef struct {
     bool                 has_auth;
     struct mqtt_utf8     mqtt_user_name;
     struct mqtt_utf8     mqtt_password_utf8;
+    /* 连接期用户名/密码快照：mqtt_do_connect() 持锁拷贝自 mqtt_username/mqtt_password，
+     * 与 conn_client_id 同一模式——mqtt_user_name.utf8/mqtt_password_utf8.utf8 需指向
+     * 生命周期覆盖整个连接期的持久内存，不能指向 mqtt_do_connect() 的栈局部变量
+     * （函数返回后即悬空，虽然当前 Zephyr MQTT 库仅在 connect 期间同步解引用，
+     * 实际不可达，但仍是脆弱反模式，故与 conn_client_id 一并纳入持久快照）。 */
+    char                 conn_username[192];
+    char                 conn_password[128];
     /* 运行时 clientId（由 cloud provider 通过 protocol_mqtt_set_client_id 设置） */
     char                 client_id[192];
     /* 连接期 clientId 快照：mqtt_do_connect() 持锁拷贝自 client_id，供本次连接
@@ -93,6 +101,14 @@ typedef struct {
     sec_tag_t            sec_tags[3];
     size_t               sec_tag_count;
     char                 tls_hostname[64];
+    /* 连接期 TLS 参数快照：与 conn_client_id 同一模式，mqtt_do_connect() 持锁
+     * 拷贝。TLS 握手在 mqtt_connect() 返回后经后续 mqtt_input() 异步完成，
+     * tls_cfg->hostname 等指针需在整个连接期保持有效；若直接指向可变的
+     * tls_hostname/sec_tags，运行时 protocol_mqtt_set_tls()/clear_tls() 的
+     * 并发写入会撕裂正在进行的握手读取，故快照到独立的持久 conn_* 字段。 */
+    sec_tag_t            conn_sec_tags[3];
+    size_t               conn_sec_tag_count;
+    char                 conn_tls_hostname[64];
 #endif
     /* 同步 */
     struct k_mutex       client_mutex;
@@ -162,7 +178,12 @@ int protocol_mqtt_start(void)
     }
 
     g_mqtt.status = MODULE_STATUS_RUNNING;
-    atomic_set(&g_mqtt.net_up, 0);
+    /* EVENT_TYPE_NET_UP/NET_DOWN 是边沿事件，不带重放：若本模块单独重启
+     * （如 recovery 场景）而网络本身未发生抖动，则不会再收到一次 NET_UP，
+     * 无条件置 0 会导致 net_up 永久停留在 0、MQTT 永久不发起连接。改为
+     * 用 network_is_up() 读取当前网络状态做初始化。network_manager.c 与
+     * protocol_mqtt.c 同受 CONFIG_GATEWAY_MQTT_ENABLE 编译门控，调用安全。 */
+    atomic_set(&g_mqtt.net_up, network_is_up() ? 1 : 0);
     g_mqtt.state = MQTT_STATE_DISCONNECTED;
     atomic_set(&g_mqtt.pending_disconnect, 0);
 
@@ -523,10 +544,11 @@ static void mqtt_worker_thread(void* p1, void* p2, void* p3)
  *
  * @return 0 表示连接请求已发出（实际结果见 CONNACK 回调）；非 0 为失败错误码
  *
- * @note 持锁快照 broker 地址/端口、clientId、认证参数后再使用，避免与
- *       protocol_mqtt_set_broker()/set_client_id()/set_auth() 的运行时写入
- *       竞争；mqtt_connect() 调用本身也单独加锁，与 protocol_mqtt_publish()
- *       互斥访问 g_mqtt.client。
+ * @note 持锁快照 broker 地址/端口、clientId、认证参数、TLS 参数后再使用，
+ *       避免与 protocol_mqtt_set_broker()/set_client_id()/set_auth()/set_tls()
+ *       的运行时写入竞争（原实现中 TLS 字段是锁外裸读，与持锁的 set_tls()
+ *       写入之间存在撕裂窗口，现并入同一持锁区间）；mqtt_connect() 调用本身
+ *       也单独加锁，与 protocol_mqtt_publish() 互斥访问 g_mqtt.client。
  */
 static int mqtt_do_connect(void)
 {
@@ -534,11 +556,15 @@ static int mqtt_do_connect(void)
 
     memset(&g_mqtt.client, 0, sizeof(g_mqtt.client));
 
-    /* 持锁快照本次连接使用的 broker 地址/端口、clientId 与认证参数，避免与
-     * protocol_mqtt_set_broker()/set_client_id()/set_auth() 的运行时写入竞争。
-     * clientId 需要在整个连接期间保持稳定（mqtt_client.client_id 与
-     * mqtt_evt_handler 拼接订阅主题都要用同一份值），因此快照到持久缓冲
-     * g_mqtt.conn_client_id，而非仅存活于本函数栈帧的局部变量。 */
+    /* 持锁快照本次连接使用的 broker 地址/端口、clientId、认证参数与 TLS 参数，
+     * 避免与 protocol_mqtt_set_broker()/set_client_id()/set_auth()/set_tls()
+     * 的运行时写入竞争。这些值需要在整个连接期间保持稳定（clientId 用于
+     * mqtt_client.client_id 与 mqtt_evt_handler 拼接订阅主题；用户名/密码/
+     * TLS hostname 与 sec_tag 列表被 mqtt_connect() 后异步进行的握手持续
+     * 引用），因此均快照到持久缓冲 g_mqtt.conn_*，而非仅存活于本函数栈帧的
+     * 局部变量——用户名/密码原实现用栈局部变量存放、却把指针存进生命周期
+     * 更长的 g_mqtt.client.user_name/password，属于悬空指针反模式（当前
+     * Zephyr MQTT 库仅在 connect 期间同步解引用，故实际不可达，但仍需修正）。 */
     k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
     char broker_addr[BROKER_ADDR_MAX_LEN];
     strncpy(broker_addr, g_mqtt.broker_addr, sizeof(broker_addr) - 1);
@@ -547,12 +573,21 @@ static int mqtt_do_connect(void)
     strncpy(g_mqtt.conn_client_id, g_mqtt.client_id, sizeof(g_mqtt.conn_client_id) - 1);
     g_mqtt.conn_client_id[sizeof(g_mqtt.conn_client_id) - 1] = '\0';
     bool has_auth = g_mqtt.has_auth;
-    char username[sizeof(g_mqtt.mqtt_username)] = {0};
-    char password[sizeof(g_mqtt.mqtt_password)] = {0};
     if (has_auth) {
-        strncpy(username, g_mqtt.mqtt_username, sizeof(username) - 1);
-        strncpy(password, g_mqtt.mqtt_password, sizeof(password) - 1);
+        strncpy(g_mqtt.conn_username, g_mqtt.mqtt_username, sizeof(g_mqtt.conn_username) - 1);
+        g_mqtt.conn_username[sizeof(g_mqtt.conn_username) - 1] = '\0';
+        strncpy(g_mqtt.conn_password, g_mqtt.mqtt_password, sizeof(g_mqtt.conn_password) - 1);
+        g_mqtt.conn_password[sizeof(g_mqtt.conn_password) - 1] = '\0';
     }
+#if defined(CONFIG_MQTT_LIB_TLS)
+    bool use_tls = g_mqtt.use_tls;
+    g_mqtt.conn_sec_tag_count = g_mqtt.sec_tag_count;
+    for (size_t i = 0; i < g_mqtt.sec_tag_count && i < ARRAY_SIZE(g_mqtt.conn_sec_tags); i++) {
+        g_mqtt.conn_sec_tags[i] = g_mqtt.sec_tags[i];
+    }
+    strncpy(g_mqtt.conn_tls_hostname, g_mqtt.tls_hostname, sizeof(g_mqtt.conn_tls_hostname) - 1);
+    g_mqtt.conn_tls_hostname[sizeof(g_mqtt.conn_tls_hostname) - 1] = '\0';
+#endif
     k_mutex_unlock(&g_mqtt.client_mutex);
 
     ret = resolve_broker_addr(&g_mqtt.broker, broker_addr, broker_port);
@@ -577,31 +612,29 @@ static int mqtt_do_connect(void)
     /* 设置 keepalive */
     g_mqtt.client.keepalive = GATEWAY_MQTT_KEEPALIVE_S;
 
-    /* 设置认证（如有） */
+    /* 设置认证（如有）：utf8 指针指向持久快照字段 conn_username/conn_password，
+     * 而非本函数栈局部变量，生命周期覆盖整个连接期 */
     if (has_auth) {
-        g_mqtt.mqtt_user_name.utf8 = (uint8_t*)username;
-        g_mqtt.mqtt_user_name.size = strlen(username);
-        g_mqtt.mqtt_password_utf8.utf8 = (uint8_t*)password;
-        g_mqtt.mqtt_password_utf8.size = strlen(password);
+        g_mqtt.mqtt_user_name.utf8 = (uint8_t*)g_mqtt.conn_username;
+        g_mqtt.mqtt_user_name.size = strlen(g_mqtt.conn_username);
+        g_mqtt.mqtt_password_utf8.utf8 = (uint8_t*)g_mqtt.conn_password;
+        g_mqtt.mqtt_password_utf8.size = strlen(g_mqtt.conn_password);
         g_mqtt.client.user_name = &g_mqtt.mqtt_user_name;
         g_mqtt.client.password = &g_mqtt.mqtt_password_utf8;
     }
 
-    /* TLS 传输配置（仅在 CONFIG_MQTT_LIB_TLS 启用且 use_tls 置位时生效） */
+    /* TLS 传输配置（仅在 CONFIG_MQTT_LIB_TLS 启用且 use_tls 置位时生效）；
+     * sec_tag 列表与 hostname 均使用上面持锁快照的 conn_* 字段 */
 #if defined(CONFIG_MQTT_LIB_TLS)
-    k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
-    bool use_tls = g_mqtt.use_tls;
-    k_mutex_unlock(&g_mqtt.client_mutex);
-
     if (use_tls) {
         g_mqtt.client.transport.type = MQTT_TRANSPORT_SECURE;
         struct mqtt_sec_config* tls_cfg = &g_mqtt.client.transport.tls.config;
         tls_cfg->peer_verify = TLS_PEER_VERIFY_REQUIRED;
         tls_cfg->cipher_list  = NULL;  /* 使用默认加密套件 */
-        tls_cfg->sec_tag_list = g_mqtt.sec_tags;
-        tls_cfg->sec_tag_count = g_mqtt.sec_tag_count;
-        tls_cfg->hostname     = g_mqtt.tls_hostname[0] ? g_mqtt.tls_hostname : NULL;
-        LOG_INF("MQTT TLS 已启用，hostname=%s", g_mqtt.tls_hostname);
+        tls_cfg->sec_tag_list = g_mqtt.conn_sec_tags;
+        tls_cfg->sec_tag_count = g_mqtt.conn_sec_tag_count;
+        tls_cfg->hostname     = g_mqtt.conn_tls_hostname[0] ? g_mqtt.conn_tls_hostname : NULL;
+        LOG_INF("MQTT TLS 已启用，hostname=%s", g_mqtt.conn_tls_hostname);
     } else {
         g_mqtt.client.transport.type = MQTT_TRANSPORT_NON_SECURE;
     }
@@ -831,6 +864,16 @@ static int resolve_broker_addr(struct sockaddr_storage* addr, const char* broker
     if (ret != 0) {
         LOG_ERR("getaddrinfo 失败: %d", ret);
         return ret;
+    }
+
+    /* 防御性检查：res->ai_addrlen 理论上不应超过 sizeof(*addr)（sockaddr_storage
+     * 已是最大地址结构容量），但一旦底层解析器返回异常长度，越界 memcpy 会破坏
+     * addr 之后的内存，故先校验再拷贝 */
+    if (res->ai_addrlen > sizeof(*addr)) {
+        LOG_ERR("getaddrinfo 返回地址长度异常: %u > %zu", (unsigned)res->ai_addrlen,
+                sizeof(*addr));
+        zsock_freeaddrinfo(res);
+        return -EINVAL;
     }
 
     memcpy(addr, res->ai_addr, res->ai_addrlen);

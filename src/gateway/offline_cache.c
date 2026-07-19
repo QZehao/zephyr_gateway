@@ -34,6 +34,11 @@ LOG_MODULE_REGISTER(offline_cache, CONFIG_SYS_LOG_LEVEL);
 #define CACHE_NVS_ID_START   64
 /* 原子状态 NVS ID：count/head/tail 合并为单一原子写入，防止掉电导致不一致 */
 #define CACHE_STATE_ID       61
+/* 单次批量重播的最大迭代次数（含被判定为损坏而丢弃的条目），避免一次
+ * work handler 调用长时间占用 workqueue 线程 */
+#define CACHE_REPLAY_BATCH_LIMIT          10
+/* 损坏条目 / 事件发布失败告警的最小日志间隔，避免连续异常刷屏 */
+#define CACHE_WARN_LOG_INTERVAL_MS        1000
 
 /* =============================================================================
  * 原子状态结构（单次 NVS 写入保证一致性）
@@ -92,6 +97,9 @@ typedef struct {
     uint32_t        write_count;
     uint32_t        read_count;
     uint32_t        overflow_count;
+    /* 限频日志时间戳：损坏条目丢弃 / 重播事件发布失败 */
+    uint32_t        last_corrupt_log_ms;
+    uint32_t        last_publish_fail_log_ms;
     /* 同步 */
     struct k_mutex  lock;
     /* 批量上报工作项：网络恢复后持续排空缓存 */
@@ -112,7 +120,8 @@ static void cache_on_cloud_upload(const gateway_cloud_data_t* data);
 static void cache_on_net_state(bool connected);
 static void cache_upload_work_handler(struct k_work* work);
 static int  cache_write_entry(const char* json_data, uint8_t data_type);
-static int  cache_read_entry(char* out_data, size_t out_size, uint8_t* out_data_type);
+static int  cache_peek_entry(char* out_data, size_t out_size, uint8_t* out_data_type);
+static void cache_commit_entry(void);
 static int  cache_nvs_init(void);
 static void cache_save_state(void);
 static void cache_load_state(void);
@@ -294,13 +303,32 @@ static void cache_upload_work_handler(struct k_work* work)
 
     k_mutex_lock(&g_cache.lock, K_FOREVER);
 
-    uint16_t batch_count = 0;
+    uint16_t batch_count = 0;  /* 实际成功重播（发布事件成功）的条目数，仅用于日志 */
     char json[CACHE_ENTRY_SIZE];
 
-    while (g_cache.count > 0) {
+    /* peek/commit 两段式：先窥视 tail 指向的条目（不动 tail/count），事件发布
+     * 成功后才 commit（推进 tail、count--）。发布失败时本轮停止重播，交由下轮
+     * work 重试，避免旧实现中「先推进指针再发布、返回值被丢弃」导致的静默丢数据。
+     * 迭代次数（含损坏丢弃）设上限，避免一次占用 workqueue 线程过久 */
+    for (uint16_t iter = 0; g_cache.count > 0 && iter < CACHE_REPLAY_BATCH_LIMIT; iter++) {
         uint8_t data_type = 0;
-        int ret = cache_read_entry(json, sizeof(json), &data_type);
-        if (ret != 0) break;
+        int ret = cache_peek_entry(json, sizeof(json), &data_type);
+        if (ret == -EBADMSG) {
+            /* 条目损坏（长度不符 NVS 存储的 cache_entry_t，常见于固件升级导致
+             * 结构变化，或 flash 数据损坏）：无法安全重播，丢弃该条目并继续，
+             * 避免卡死整个重播队列 */
+            uint32_t now = k_uptime_get_32();
+            if ((now - g_cache.last_corrupt_log_ms) >= CACHE_WARN_LOG_INTERVAL_MS) {
+                g_cache.last_corrupt_log_ms = now;
+                LOG_WRN("离线缓存条目损坏(长度不符)，已丢弃 tail=%u", g_cache.tail);
+            }
+            cache_commit_entry();
+            continue;
+        }
+        if (ret != 0) {
+            /* 设备错误等硬故障：本轮停止，下轮 work 重试 */
+            break;
+        }
 
         gateway_cloud_data_t data = {
             .timestamp = k_uptime_get_32(),
@@ -311,15 +339,23 @@ static void cache_upload_work_handler(struct k_work* work)
 
         /* 重播发布回放事件（REPLAY），仅 cloud_upload 订阅直发；不再发 CLOUD_UPLOAD，
          * 避免被 offline_cache 自身的缓存路径重新捕获造成回环 */
-        event_publish_copy(EVENT_TYPE_CLOUD_REPLAY, EVENT_PRIORITY_NORMAL,
-                           &data, sizeof(data));
-
-        g_cache.read_count++;
-        batch_count++;
-
-        if (batch_count >= 10) {
+        event_status_t pub_ret = event_publish_copy(EVENT_TYPE_CLOUD_REPLAY, EVENT_PRIORITY_NORMAL,
+                                                      &data, sizeof(data));
+        if (pub_ret != EVENT_OK) {
+            /* 事件队列满等：本条尚未 commit，tail/count 保持不变，下轮 work 会
+             * 重新尝试同一条目，不丢数据 */
+            uint32_t now = k_uptime_get_32();
+            if ((now - g_cache.last_publish_fail_log_ms) >= CACHE_WARN_LOG_INTERVAL_MS) {
+                g_cache.last_publish_fail_log_ms = now;
+                LOG_WRN("离线缓存重播事件发布失败(err=%d)，本轮停止，下轮重试", (int)pub_ret);
+            }
             break;
         }
+
+        /* 发布成功才 commit：推进 tail、count-- */
+        cache_commit_entry();
+        g_cache.read_count++;
+        batch_count++;
     }
 
     cache_save_state();
@@ -379,10 +415,24 @@ static int cache_write_entry(const char* json_data, uint8_t data_type)
     return 0;
 }
 
-static int cache_read_entry(char* out_data, size_t out_size, uint8_t* out_data_type)
+/**
+ * @brief 窥视 tail 指向的缓存条目，不推进 tail/count
+ *
+ * 与 cache_commit_entry() 构成 peek/commit 两段式接口：调用方应先 peek 取出
+ * 数据并成功处理（如发布事件）后，再调用 cache_commit_entry() 提交，避免
+ * “先移动指针、后处理数据”导致处理失败时数据已被丢弃的问题。
+ *
+ * @param out_data      输出缓冲区
+ * @param out_size      输出缓冲区大小
+ * @param out_data_type 输出数据类型，可为 NULL
+ * @return 0 成功；-ENOENT 队列为空；-ENODEV 存储未挂载；
+ *         -EBADMSG 条目长度与 cache_entry_t 不符（视为损坏，调用方应
+ *         调用 cache_commit_entry() 丢弃后继续）；其他负值为 NVS 读取错误
+ */
+static int cache_peek_entry(char* out_data, size_t out_size, uint8_t* out_data_type)
 {
     if (g_cache.count == 0) {
-        return -1;
+        return -ENOENT;
     }
 
     if (g_cache.fs.flash_device == NULL) {
@@ -390,12 +440,18 @@ static int cache_read_entry(char* out_data, size_t out_size, uint8_t* out_data_t
     }
 
     uint16_t nvs_id = CACHE_NVS_ID_START + g_cache.tail;
-    cache_entry_t entry;
-    size_t len = sizeof(entry);
+    /* 清零后再读，避免短读（实际字节数 < sizeof(entry)，如固件升级后
+     * cache_entry_t 结构变化）时把未初始化的栈内容当作合法数据使用 */
+    cache_entry_t entry = {0};
 
-    int ret = nvs_read(&g_cache.fs, nvs_id, &entry, len);
+    int ret = nvs_read(&g_cache.fs, nvs_id, &entry, sizeof(entry));
     if (ret < 0) {
         return ret;
+    }
+    if ((size_t)ret != sizeof(entry)) {
+        /* 长度不符：可能是短读，也可能因缓冲区小于实际存储项而被截断，
+         * 两种情况都无法保证 entry 内容自洽，一律按损坏条目处理 */
+        return -EBADMSG;
     }
 
     if (out_data_type != NULL) {
@@ -404,10 +460,23 @@ static int cache_read_entry(char* out_data, size_t out_size, uint8_t* out_data_t
     strncpy(out_data, entry.data, out_size - 1);
     out_data[out_size - 1] = '\0';
 
+    return 0;
+}
+
+/**
+ * @brief 提交（丢弃）tail 指向的条目：推进 tail、count--
+ *
+ * 必须在 cache_peek_entry() 之后调用，且调用者需保证调用之间持有
+ * g_cache.lock（与 peek 处于同一临界区），否则 tail/count 可能与
+ * peek 时读取的条目不一致。
+ */
+static void cache_commit_entry(void)
+{
+    if (g_cache.count == 0) {
+        return;
+    }
     g_cache.tail = (g_cache.tail + 1) % CACHE_MAX_ENTRIES;
     g_cache.count--;
-
-    return 0;
 }
 
 static int cache_nvs_init(void)
@@ -470,10 +539,20 @@ static void cache_load_state(void)
 {
     if (g_cache.fs.flash_device == NULL) return;
 
-    cache_state_t state;
+    cache_state_t state = {0};
     int ret = nvs_read(&g_cache.fs, CACHE_STATE_ID, &state, sizeof(state));
     if (ret < 0) {
         LOG_WRN("加载缓存状态失败: %d，重置为默认值", ret);
+        g_cache.count = 0;
+        g_cache.head  = 0;
+        g_cache.tail  = 0;
+        return;
+    }
+    /* 长度校验：短读/结构变化会导致 state 内容不自洽；其后的 CRC 校验是第二道
+     * 防线，这里先行拦截，避免把部分未初始化的内容当作有效数据参与 CRC 计算 */
+    if ((size_t)ret != sizeof(state)) {
+        LOG_WRN("缓存状态长度不符(实际 %d，期望 %u)，重置为默认值",
+                ret, (unsigned)sizeof(state));
         g_cache.count = 0;
         g_cache.head  = 0;
         g_cache.tail  = 0;

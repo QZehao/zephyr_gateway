@@ -14,8 +14,8 @@
  *   - 事件上报：${productId}/${deviceName}/event
  *   - 数据通道：${productId}/${deviceName}/data
  *
- * TODO: 当前密码使用 DeviceSecret 直接填充，生产环境需集成 crypto 库
- *       计算 HMAC-SHA256 签名。
+ * 密码由 mbedtls 计算 HMAC-SHA256 签名生成；若 HMAC 不可用或计算失败，直接
+ * 硬失败（不回退明文 DeviceSecret 密码上网），详见 tencent_setup_auth()。
  * 参考文档:
  *   - [腾讯云 IoT Hub MQTT 接入](https://cloud.tencent.com/document/product/634/32546)
  */
@@ -131,14 +131,15 @@ const cloud_provider_t* cloud_tencent_get_provider(void)
  *     expiry=0 表示永不过期（仅适用于内网或测试场景，生产应按文档设置有效期）。
  *   - password = HMAC-SHA256(DeviceSecret, username + "\n" + connid + "\n" + expiry)
  *     注：腾讯云签名格式详见官方文档，此处以 username 字段作为签名对象以匹配常见实现。
- *     若 HMAC 不可用，回退到 DeviceSecret 占位并 LOG_WRN。
+ *     若 HMAC 不可用，直接硬失败，不回退明文 DeviceSecret 密码上网：
+ *     宁可不上云，不可明文泄密。
  *   - broker = ${productId}.iotcloud.tencentdevices.com:1883
  *
  * @note sdkappid/connid/expiry 来源：部署时可通过 Kconfig 或运行时接口注入。
  *       当前用固定占位值，生产环境需按腾讯云文档要求填充有效 sdkappid 和到期时间。
  *
- * @return 0 成功；snprintf 拼装被截断/失败返回 -ENOMEM；下发 MQTT 层参数失败
- *         返回 protocol_mqtt_set_* 对应的负错误码。
+ * @return 0 成功；snprintf 拼装被截断/失败返回 -ENOMEM；HMAC 签名失败返回其
+ *         负错误码；下发 MQTT 层参数失败返回 protocol_mqtt_set_* 对应的负错误码。
  */
 static int tencent_setup_auth(void)
 {
@@ -176,10 +177,10 @@ static int tencent_setup_auth(void)
         password, sizeof(password));
 
     if (ret != 0) {
-        /* HMAC 不可用，回退到 DeviceSecret 占位 */
-        LOG_WRN("HMAC-SHA256 签名失败 (%d)，回退到 DeviceSecret 占位密码（仅测试用途）", ret);
-        strncpy(password, TENCENT_DEVICE_SECRET, sizeof(password) - 1);
-        password[sizeof(password) - 1] = '\0';
+        /* HMAC 不可用（mbedtls 未启用）或计算失败：宁可不上云，不可明文泄密——
+         * 不打印密钥内容，直接失败，交由调用方（start）中止启动 */
+        LOG_ERR("HMAC-SHA256 签名失败 (%d)，拒绝回退明文密码，腾讯云鉴权配置失败", ret);
+        return ret;
     }
 
     /* 构造腾讯云 broker 地址 */
@@ -245,7 +246,9 @@ static int cloud_tencent_start(void)
 
 static int cloud_tencent_stop(void)
 {
-    protocol_mqtt_set_auth(NULL, NULL);
+    /* 认证生命周期跟随 Provider 配置而非 start/stop：清空 username/password 会让
+     * protocol_mqtt 在仍处于连接/重连状态时使用空凭据触发无限退避重连，
+     * 连接的建立与断开由 protocol_mqtt 自身生命周期管理，此处不主动清认证 */
     LOG_INF("腾讯云 Provider 已停止");
     return 0;
 }

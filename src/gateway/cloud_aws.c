@@ -49,27 +49,59 @@ LOG_MODULE_REGISTER(cloud_aws, CONFIG_SYS_LOG_LEVEL);
 #define AWS_THING_NAME CONFIG_GATEWAY_AWS_THING_NAME
 #define AWS_REGION    CONFIG_GATEWAY_AWS_REGION
 
+/* Shadow 包装后 payload 缓冲区尺寸：原始 JSON 上限（与 cloud_upload.c 的
+ * CLOUD_JSON_BUF_SIZE 约定一致，取 256）+ "{"state":{"reported":...}}" 包装开销 */
+#define AWS_SHADOW_PAYLOAD_BUF_SIZE (256 + 64)
+
 /* =============================================================================
  * Provider 回调实现
  * ============================================================================= */
 
+/**
+ * @brief AWS Provider 数据发布：按消息类型分流到不同 Topic
+ *
+ * - CLOUD_MSG_TELEMETRY：发布到 Device Shadow 更新 Topic，payload 须包装为
+ *   `{"state":{"reported":<原始 JSON>}}`（AWS Shadow 文档格式要求），否则会被
+ *   Shadow 服务拒绝或产生非预期文档结构。
+ * - CLOUD_MSG_ANOMALY：发布到普通事件 Topic `gateway/${thingName}/anomaly`，
+ *   原样发送，不套 Shadow 包装。
+ * - 其余类型：暂不支持，返回 -EINVAL。
+ */
 static int cloud_aws_publish(cloud_msg_type_t type, const char* json_payload)
 {
-    (void)type;
-
-    /* AWS Shadow update topic */
     char topic[128];
-    int  len = snprintf(topic, sizeof(topic),
-                         "$aws/things/%s/shadow/update", AWS_THING_NAME);
-    if (len <= 0 || (size_t)len >= sizeof(topic)) {
-        LOG_ERR("AWS Topic 拼装失败或被截断 (len=%d)", len);
-        return -ENOMEM;
-    }
+    int  topic_len;
 
-    /* AWS IoT 要求 TLS (8883)，当前项目未启用 TLS，publish 会失败。
-     * 先尝试用明文端口发送（仅用于测试），生产必须启用 TLS。 */
-    return protocol_mqtt_publish(topic, json_payload,
-                                 (uint16_t)strlen(json_payload));
+    switch (type) {
+    case CLOUD_MSG_TELEMETRY: {
+        topic_len = snprintf(topic, sizeof(topic),
+                              "$aws/things/%s/shadow/update", AWS_THING_NAME);
+        if (topic_len <= 0 || (size_t)topic_len >= sizeof(topic)) {
+            LOG_ERR("AWS Topic 拼装失败或被截断 (len=%d)", topic_len);
+            return -ENOMEM;
+        }
+
+        char wrapped[AWS_SHADOW_PAYLOAD_BUF_SIZE];
+        int  wrapped_len = snprintf(wrapped, sizeof(wrapped),
+                                     "{\"state\":{\"reported\":%s}}", json_payload);
+        if (wrapped_len <= 0 || (size_t)wrapped_len >= sizeof(wrapped)) {
+            LOG_ERR("AWS Shadow payload 包装失败或被截断 (len=%d)", wrapped_len);
+            return -ENOMEM;
+        }
+
+        return protocol_mqtt_publish(topic, wrapped, (uint16_t)strlen(wrapped));
+    }
+    case CLOUD_MSG_ANOMALY:
+        topic_len = snprintf(topic, sizeof(topic), "gateway/%s/anomaly", AWS_THING_NAME);
+        if (topic_len <= 0 || (size_t)topic_len >= sizeof(topic)) {
+            LOG_ERR("AWS Topic 拼装失败或被截断 (len=%d)", topic_len);
+            return -ENOMEM;
+        }
+        return protocol_mqtt_publish(topic, json_payload,
+                                     (uint16_t)strlen(json_payload));
+    default:
+        return -EINVAL;
+    }
 }
 
 static bool cloud_aws_is_connected(void)

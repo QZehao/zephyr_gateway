@@ -1,9 +1,10 @@
 /**
  * @file webshell.c
- * @brief 远程 Web Shell 基础版模块实现
+ * @brief 本地 Shell 命令面板模块实现
  *
- * 扩展 framework Shell 服务，注册工业网关专用命令。
- * 通过 MQTT 订阅命令主题，执行后返回结果。
+ * 扩展 framework Shell 服务（Zephyr Shell），注册工业网关专用命令，
+ * 通过本地控制台（UART/USB CDC 等 Shell backend）交互执行，非远程通道。
+ * MQTT 远程命令通道见 protocol_mqtt.c 的 mqtt_on_command 扩展点，当前未实现。
  */
 
 #include "webshell.h"
@@ -202,6 +203,12 @@ static int cmd_modbus_read(const struct shell* sh, size_t argc, char** argv)
         shell_print(sh, "count 范围: 1-16");
         return -1;
     }
+    /* addr_raw <= 0xFFFF 且 count_raw 为 [1,16] 内的 unsigned long，
+     * 此处相加不会下溢/上溢 unsigned long，可安全比较 */
+    if (addr_raw + count_raw - 1 > 0xFFFF) {
+        shell_print(sh, "addr+count-1 超出 16 位寄存器范围");
+        return -1;
+    }
 
     uint16_t addr = (uint16_t)addr_raw;
     uint16_t count = (uint16_t)count_raw;
@@ -321,20 +328,20 @@ static int cmd_anomaly_config(const struct shell* sh, size_t argc, char** argv)
 
     char* endptr;
     float w = strtof(argv[2], &endptr);
-    if (endptr == argv[2] || !isfinite(w) || w <= 0.0f) {
-        shell_print(sh, "warning 阈值必须是正数");
+    if (endptr == argv[2] || *endptr != '\0' || !isfinite(w) || w <= 0.0f) {
+        shell_print(sh, "warning 阈值必须是正数（不允许尾随字符）");
         return -1;
     }
     float c = strtof(argv[3], &endptr);
-    if (endptr == argv[3] || !isfinite(c) || c <= 0.0f) {
-        shell_print(sh, "critical 阈值必须是正数");
+    if (endptr == argv[3] || *endptr != '\0' || !isfinite(c) || c <= 0.0f) {
+        shell_print(sh, "critical 阈值必须是正数（不允许尾随字符）");
         return -1;
     }
     float e = c * 1.5f;
     if (argc > 4) {
         e = strtof(argv[4], &endptr);
-        if (endptr == argv[4] || !isfinite(e) || e <= 0.0f) {
-            shell_print(sh, "emergency 阈值必须是正数");
+        if (endptr == argv[4] || *endptr != '\0' || !isfinite(e) || e <= 0.0f) {
+            shell_print(sh, "emergency 阈值必须是正数（不允许尾随字符）");
             return -1;
         }
     }

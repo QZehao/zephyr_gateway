@@ -10,8 +10,8 @@
  *   - Username: ${deviceName}&${productKey}
  *   - Password: HMAC-SHA1(DeviceSecret, content) → Hex（需 crypto 库）
  *
- * TODO: 当前密码使用 DeviceSecret 直接填充，生产环境需集成 mbedtls
- *       计算 HMAC-SHA1 签名。
+ * 密码由 mbedtls 计算 HMAC-SHA1 签名生成；若 HMAC 不可用或计算失败，直接
+ * 硬失败（不回退明文 DeviceSecret 密码上网），详见 aliyun_setup_auth()。
  * 参考文档:
  *   - [阿里云 IoT MQTT 一机一密接入](https://help.aliyun.com/zh/iot/developer-reference/device-authentication)
  */
@@ -50,6 +50,13 @@ LOG_MODULE_REGISTER(cloud_aliyun, CONFIG_SYS_LOG_LEVEL);
 /* 物模型属性上报 Topic */
 #define ALIYUN_TOPIC_PROPERTY_POST  "/sys/%s/%s/thing/event/property/post"
 
+/* 物模型事件上报 Topic（异常事件专用） */
+#define ALIYUN_TOPIC_EVENT_POST     "/sys/%s/%s/thing/event/%s/post"
+
+/* TODO: 事件标识符当前硬编码为 "anomaly"，需与云端物模型 TSL 中定义的事件
+ * identifier 核对一致，不一致会导致云端事件解析失败或被丢弃 */
+#define ALIYUN_EVENT_ID_ANOMALY     "anomaly"
+
 /* Alink JSON 格式：物模型属性上报 */
 static int aliyun_build_property_json(const char* json_in, char* buf, size_t buf_len)
 {
@@ -62,25 +69,58 @@ static int aliyun_build_property_json(const char* json_in, char* buf, size_t buf
                     (unsigned long)k_uptime_get(), json_in);
 }
 
+/* Alink JSON 格式：物模型事件上报（异常告警） */
+static int aliyun_build_event_json(const char* json_in, char* buf, size_t buf_len)
+{
+    /* 示例: {"id":"123","version":"1.0","params":{"errorCode":1}} */
+    return snprintf(buf, buf_len,
+                    "{\"id\":\"%lu\",\"version\":\"1.0\",\"params\":%s}",
+                    (unsigned long)k_uptime_get(), json_in);
+}
+
 /* =============================================================================
  * Provider 回调实现
  * ============================================================================= */
 
+/**
+ * @brief 阿里云 Provider 数据发布：按消息类型分流到不同物模型 Topic
+ *
+ * - CLOUD_MSG_TELEMETRY：物模型属性上报 Topic，Alink property 包装不变。
+ * - CLOUD_MSG_ANOMALY：物模型事件上报 Topic，Alink event 包装（见
+ *   ALIYUN_EVENT_ID_ANOMALY 处 TODO：事件标识符需与云端 TSL 定义一致）。
+ * - 其余类型：暂不支持，返回 -EINVAL。
+ */
 static int cloud_aliyun_publish(cloud_msg_type_t type, const char* json_payload)
 {
-    (void)type;
-
     char topic[128];
-    int  topic_len = snprintf(topic, sizeof(topic), ALIYUN_TOPIC_PROPERTY_POST,
-                               ALIYUN_PRODUCT_KEY, ALIYUN_DEVICE_NAME);
-    if (topic_len <= 0 || (size_t)topic_len >= sizeof(topic)) {
-        LOG_ERR("阿里云 Topic 拼装失败或被截断 (len=%d)", topic_len);
-        return -ENOMEM;
+    int  topic_len;
+    char payload[256];
+    int  payload_len;
+
+    switch (type) {
+    case CLOUD_MSG_TELEMETRY:
+        topic_len = snprintf(topic, sizeof(topic), ALIYUN_TOPIC_PROPERTY_POST,
+                              ALIYUN_PRODUCT_KEY, ALIYUN_DEVICE_NAME);
+        if (topic_len <= 0 || (size_t)topic_len >= sizeof(topic)) {
+            LOG_ERR("阿里云 Topic 拼装失败或被截断 (len=%d)", topic_len);
+            return -ENOMEM;
+        }
+        payload_len = aliyun_build_property_json(json_payload, payload, sizeof(payload));
+        break;
+    case CLOUD_MSG_ANOMALY:
+        topic_len = snprintf(topic, sizeof(topic), ALIYUN_TOPIC_EVENT_POST,
+                              ALIYUN_PRODUCT_KEY, ALIYUN_DEVICE_NAME, ALIYUN_EVENT_ID_ANOMALY);
+        if (topic_len <= 0 || (size_t)topic_len >= sizeof(topic)) {
+            LOG_ERR("阿里云 Topic 拼装失败或被截断 (len=%d)", topic_len);
+            return -ENOMEM;
+        }
+        payload_len = aliyun_build_event_json(json_payload, payload, sizeof(payload));
+        break;
+    default:
+        return -EINVAL;
     }
 
-    char payload[256];
-    int len = aliyun_build_property_json(json_payload, payload, sizeof(payload));
-    if (len <= 0 || (size_t)len >= sizeof(payload)) {
+    if (payload_len <= 0 || (size_t)payload_len >= sizeof(payload)) {
         return -ENOMEM;
     }
 
@@ -140,10 +180,11 @@ const cloud_provider_t* cloud_aliyun_get_provider(void)
  *   - content  = "clientId${rawClientId}deviceName${deviceName}productKey${productKey}"
  *   - broker   = ${productKey}.iot-as-mqtt.${region}.aliyuncs.com:1883
  *
- * 若 HMAC 不可用（CONFIG_MBEDTLS 未启用），回退到 DeviceSecret 占位密码并 LOG_WRN。
+ * 若 HMAC 不可用（CONFIG_MBEDTLS 未启用）或计算失败，直接硬失败，不回退明文
+ * DeviceSecret 密码上网：宁可不上云，不可明文泄密。
  *
- * @return 0 成功；snprintf 拼装被截断/失败返回 -ENOMEM；下发 MQTT 层参数失败
- *         返回 protocol_mqtt_set_* 对应的负错误码。
+ * @return 0 成功；snprintf 拼装被截断/失败返回 -ENOMEM；HMAC 签名失败返回其
+ *         负错误码；下发 MQTT 层参数失败返回 protocol_mqtt_set_* 对应的负错误码。
  */
 static int aliyun_setup_auth(void)
 {
@@ -187,10 +228,10 @@ static int aliyun_setup_auth(void)
         password, sizeof(password));
 
     if (ret != 0) {
-        /* HMAC 不可用（mbedtls 未启用或计算失败），回退到 DeviceSecret 占位 */
-        LOG_WRN("HMAC-SHA1 签名失败 (%d)，回退到 DeviceSecret 占位密码（仅测试用途）", ret);
-        strncpy(password, ALIYUN_DEVICE_SECRET, sizeof(password) - 1);
-        password[sizeof(password) - 1] = '\0';
+        /* HMAC 不可用（mbedtls 未启用）或计算失败：宁可不上云，不可明文泄密——
+         * 不打印密钥内容，直接失败，交由调用方（start）中止启动 */
+        LOG_ERR("HMAC-SHA1 签名失败 (%d)，拒绝回退明文密码，阿里云鉴权配置失败", ret);
+        return ret;
     }
 
     /* 构造阿里云 broker 地址 */
@@ -256,7 +297,9 @@ static int cloud_aliyun_start(void)
 
 static int cloud_aliyun_stop(void)
 {
-    protocol_mqtt_set_auth(NULL, NULL);
+    /* 认证生命周期跟随 Provider 配置而非 start/stop：清空 username/password 会让
+     * protocol_mqtt 在仍处于连接/重连状态时使用空凭据触发无限退避重连，
+     * 连接的建立与断开由 protocol_mqtt 自身生命周期管理，此处不主动清认证 */
     LOG_INF("阿里云 Provider 已停止");
     return 0;
 }

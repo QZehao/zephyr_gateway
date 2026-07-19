@@ -462,8 +462,8 @@ static int cmd_sim_config(const struct shell* sh, size_t argc, char** argv)
 
     char* endptr;
     float value = strtof(argv[3], &endptr);
-    if (endptr == argv[3] || !isfinite(value) || fabsf(value) > SIM_VALUE_ABS_LIMIT) {
-        shell_print(sh, "无效数值（需为有限数，且 |value| <= %.0f）", (double)SIM_VALUE_ABS_LIMIT);
+    if (endptr == argv[3] || *endptr != '\0' || !isfinite(value) || fabsf(value) > SIM_VALUE_ABS_LIMIT) {
+        shell_print(sh, "无效数值（需为有限数，不允许尾随字符，且 |value| <= %.0f）", (double)SIM_VALUE_ABS_LIMIT);
         return -1;
     }
 
@@ -517,8 +517,8 @@ static int cmd_sim_inject(const struct shell* sh, size_t argc, char** argv)
 
     char* endptr;
     float value = strtof(argv[2], &endptr);
-    if (endptr == argv[2] || !isfinite(value) || fabsf(value) > SIM_VALUE_ABS_LIMIT) {
-        shell_print(sh, "无效数值（需为有限数，且 |value| <= %.0f）", (double)SIM_VALUE_ABS_LIMIT);
+    if (endptr == argv[2] || *endptr != '\0' || !isfinite(value) || fabsf(value) > SIM_VALUE_ABS_LIMIT) {
+        shell_print(sh, "无效数值（需为有限数，不允许尾随字符，且 |value| <= %.0f）", (double)SIM_VALUE_ABS_LIMIT);
         return -1;
     }
 

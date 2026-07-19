@@ -113,8 +113,12 @@ int protocol_can_start(void)
         return -1;
     }
 
-    /* 配置 RX 过滤器参数（线程启动后使用） */
-    g_can.filter.flags = CAN_FILTER_IDE;
+    /* 配置 RX 过滤器参数（线程启动后使用）
+     * Zephyr can_frame_matches_filter() 对 flags 含 CAN_FILTER_IDE 的过滤器，
+     * 要求帧本身也带 CAN_FRAME_IDE（扩展帧）才算匹配，标准帧会被直接拒绝。
+     * Kconfig 默认 CONFIG_GATEWAY_CAN_FILTER_ID=0x100 / MASK=0x7F0 是按 11 位
+     * 标准 ID 设计的，flags 必须为 0（标准帧过滤），否则标准帧全部收不到。 */
+    g_can.filter.flags = 0;
     g_can.filter.id = CONFIG_GATEWAY_CAN_FILTER_ID;
     g_can.filter.mask = CONFIG_GATEWAY_CAN_FILTER_MASK;
     g_can.filter_id = -1;

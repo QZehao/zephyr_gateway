@@ -87,9 +87,15 @@ int cloud_provider_register(const cloud_provider_t* provider)
 /**
  * @brief 向所有已注册的 Provider 广播发布一条消息
  *
- * 持锁遍历注册表逐个调用 publish()，单个 Provider 失败不影响其余 Provider 的
- * 发布尝试。调用者可通过 out_success_count/out_fail_count 判断是否需要转入
- * 离线缓存（例如 success_count==0 时，无论是否有 Provider 均视为失败）。
+ * 锁内仅将已注册 Provider 的指针拷贝到局部数组快照，解锁后再逐个调用
+ * publish()——publish() 内部会阻塞做 MQTT 发送，若持锁横跨该调用，会在
+ * CLOUD_REPLAY 等运行在全局唯一事件分发线程上的路径上卡住 g_provider_lock，
+ * 拖累全系统事件分发。前提（已用 grep 核查成立）：cloud_provider 未提供
+ * unregister API，Provider 描述符均为静态存储期变量，一旦注册后指针永久有效，
+ * 因此在锁外持有快照指针调用 publish() 是安全的。单个 Provider 失败不影响其
+ * 余 Provider 的发布尝试。调用者可通过 out_success_count/out_fail_count 判断
+ * 是否需要转入离线缓存（例如 success_count==0 时，无论是否有 Provider 均视为
+ * 失败）。
  *
  * @param type              消息类型（遥测/异常）
  * @param json_payload      JSON 载荷字符串
@@ -104,13 +110,21 @@ int cloud_provider_publish_all(cloud_msg_type_t type, const char* json_payload,
         return -EINVAL;
     }
 
+    const cloud_provider_t* snapshot[MAX_CLOUD_PROVIDERS];
+    uint8_t count;
+
+    k_mutex_lock(&g_provider_lock, K_FOREVER);
+    count = g_provider_count;
+    for (uint8_t i = 0; i < count; i++) {
+        snapshot[i] = g_providers[i];
+    }
+    k_mutex_unlock(&g_provider_lock);
+
     uint8_t success = 0;
     uint8_t fail = 0;
 
-    k_mutex_lock(&g_provider_lock, K_FOREVER);
-
-    for (uint8_t i = 0; i < g_provider_count; i++) {
-        const cloud_provider_t* p = g_providers[i];
+    for (uint8_t i = 0; i < count; i++) {
+        const cloud_provider_t* p = snapshot[i];
         if (p != NULL && p->publish != NULL) {
             int ret = p->publish(type, json_payload);
             if (ret == 0) {
@@ -121,8 +135,6 @@ int cloud_provider_publish_all(cloud_msg_type_t type, const char* json_payload,
             }
         }
     }
-
-    k_mutex_unlock(&g_provider_lock);
 
     if (out_success_count != NULL) {
         *out_success_count = success;

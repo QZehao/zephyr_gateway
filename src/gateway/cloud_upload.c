@@ -97,6 +97,7 @@ static data_bus_consumer_t* g_cloud_sensor_consumer = NULL;
  * 前向声明
  * ============================================================================= */
 
+static int  cloud_on_sensor_data_internal(const gateway_sensor_data_t *sensor, bool force);
 static void cloud_on_sensor_data(const gateway_sensor_data_t *sensor);
 static void cloud_on_anomaly(const gateway_anomaly_event_t *evt);
 static void cloud_handle_offline_unlocked(uint8_t data_type, const char *json);
@@ -139,7 +140,9 @@ int cloud_upload_start(void)
         return -1;
     }
 
-    /* 注册到 data_bus sensor 通道 */
+    /* 注册到 data_bus sensor 通道：注册失败视为启动失败。此时上传线程尚未创建
+     * （线程创建在本函数末尾，晚于此处），直接 return 不会造成线程泄漏，无需
+     * 额外的线程回收逻辑——这是改动最小且不引入资源泄漏的方案。 */
     if (g_sensor_channel != NULL && g_cloud_sensor_consumer == NULL) {
         data_bus_consumer_cfg_t cfg = {
             .name      = "cloud_upload",
@@ -148,11 +151,11 @@ int cloud_upload_start(void)
         int ret = data_bus_consumer_register(g_sensor_channel, &cfg,
                                               &g_cloud_sensor_consumer);
         if (ret != 0) {
-            LOG_ERR("注册 sensor consumer 失败: %d", ret);
+            LOG_ERR("注册 sensor consumer 失败: %d，云上传模块启动失败", ret);
             g_cloud_sensor_consumer = NULL;
-        } else {
-            LOG_INF("cloud_upload 已订阅 data_bus 'sensor'");
+            return ret;
         }
+        LOG_INF("cloud_upload 已订阅 data_bus 'sensor'");
     }
 
     g_cloud.status = MODULE_STATUS_RUNNING;
@@ -294,16 +297,19 @@ int cloud_upload_control(int cmd, void *arg)
         return 0;
     }
     case CLOUD_CMD_FORCE_UPLOAD: {
-        /* 强制上传最后一条数据：需持有锁防止与 cloud_on_sensor_data 竞争 */
+        /* 强制上传最后一条数据：需持有锁防止与 cloud_on_sensor_data 竞争。
+         * force=true 跳过 upload_interval_ms 节流判断，避免复用带节流的
+         * cloud_on_sensor_data() 导致本次强制上传被静默吞掉；没有可上传的
+         * pending 样本时如实返回 -ENODATA，不再谎报成功。 */
         if (g_cloud.has_pending_sensor)
         {
             gateway_sensor_data_t sensor_copy = g_cloud.last_sensor;
+            g_cloud.has_pending_sensor = false;
             k_mutex_unlock(&g_cloud.lock);
-            cloud_on_sensor_data(&sensor_copy);
-            return 0;
+            return cloud_on_sensor_data_internal(&sensor_copy, true);
         }
         k_mutex_unlock(&g_cloud.lock);
-        return 0;
+        return -ENODATA;
     }
     default:
         k_mutex_unlock(&g_cloud.lock);
@@ -333,37 +339,52 @@ void cloud_upload_get_stats(uint32_t *success_count, uint32_t *fail_count, uint3
  * ============================================================================= */
 
 /**
- * @brief 传感器采样回调：仅做间隔判定与拷贝入队，不做 JSON 序列化/网络发送
+ * @brief 传感器采样处理内部实现：仅做间隔判定与拷贝入队，不做 JSON 序列化/网络发送
  *
  * 在 data_bus 分发线程上下文中被调用，必须保持非阻塞：
  *   - 保存最新样本、按 upload_interval_ms 节流，均为纯内存操作（持锁很短）；
  *   - 真正的 JSON 序列化与 cloud_provider_publish_all 发布延后到专用上传线程完成。
+ *
+ * @param sensor 传感器样本
+ * @param force  true：跳过 upload_interval_ms 节流判断，无条件走入队路径（用于
+ *               CLOUD_CMD_FORCE_UPLOAD——调用方已持锁读出 last_sensor 副本并清
+ *               空 has_pending_sensor，这里不再重复写 last_sensor/has_pending_sensor，
+ *               避免覆盖节流路径下的正常状态）；false 为常规采样回调路径。
+ * @return 恒为 0（保留返回值用于未来扩展；当前失败路径均为静默丢弃/退化为离线缓存）
  */
-static void cloud_on_sensor_data(const gateway_sensor_data_t *sensor)
+static int cloud_on_sensor_data_internal(const gateway_sensor_data_t *sensor, bool force)
 {
     if (sensor == NULL)
-        return;
+        return -EINVAL;
 
-    k_mutex_lock(&g_cloud.lock, K_FOREVER);
+    if (!force) {
+        k_mutex_lock(&g_cloud.lock, K_FOREVER);
 
-    /* 保存最新传感器数据 */
-    g_cloud.last_sensor = *sensor;
-    g_cloud.has_pending_sensor = true;
+        /* 保存最新传感器数据 */
+        g_cloud.last_sensor = *sensor;
+        g_cloud.has_pending_sensor = true;
 
-    /* 检查上传间隔 */
-    uint32_t now = k_uptime_get_32();
-    if ((now - g_cloud.last_upload_ms) < g_cloud.upload_interval_ms)
-    {
+        /* 检查上传间隔 */
+        uint32_t now = k_uptime_get_32();
+        if ((now - g_cloud.last_upload_ms) < g_cloud.upload_interval_ms)
+        {
+            k_mutex_unlock(&g_cloud.lock);
+            return 0;
+        }
+        g_cloud.last_upload_ms = now;
+        g_cloud.has_pending_sensor = false;
         k_mutex_unlock(&g_cloud.lock);
-        return;
     }
-    g_cloud.last_upload_ms = now;
-    g_cloud.has_pending_sensor = false;
-    k_mutex_unlock(&g_cloud.lock);
 
     cloud_upload_item_t item = { .type = CLOUD_UPLOAD_ITEM_SENSOR };
     item.data.sensor = *sensor;
     cloud_enqueue_or_fallback(&item);
+    return 0;
+}
+
+static void cloud_on_sensor_data(const gateway_sensor_data_t *sensor)
+{
+    (void)cloud_on_sensor_data_internal(sensor, false);
 }
 
 /* 无锁版本：调用者必须持有 g_cloud.lock */

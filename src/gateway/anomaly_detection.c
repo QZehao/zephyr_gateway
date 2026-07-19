@@ -166,12 +166,15 @@ int anomaly_detection_start(void)
         int ret = data_bus_consumer_register(g_sensor_channel, &cfg,
                                               &g_anomaly_sensor_consumer);
         if (ret != 0) {
+            /* 注册失败即收不到传感器数据：anomaly_detection_on_event() 是空实现，
+             * 并非可用的 fallback 路径。此处如实暴露失败并返回错误，由
+             * module_manager_start_module() 将本模块置为 MODULE_STATUS_ERROR，
+             * 不影响其他模块的启动 */
             LOG_ERR("注册 sensor consumer 失败: %d", ret);
             g_anomaly_sensor_consumer = NULL;
-            /* 继续启动：on_event 路径仍可用作 fallback */
-        } else {
-            LOG_INF("anomaly_detection 已订阅 data_bus 'sensor'");
+            return ret;
         }
+        LOG_INF("anomaly_detection 已订阅 data_bus 'sensor'");
     }
 
     g_ad.status = MODULE_STATUS_RUNNING;
@@ -249,6 +252,13 @@ int anomaly_detection_control(int cmd, void* arg)
             uint8_t sensor_type = *(uint8_t*)arg;
             if (sensor_type < MAX_SENSOR_TYPES) {
                 memset(&g_ad.windows[sensor_type], 0, sizeof(sensor_window_t));
+                /* 同步清除该传感器关联的最近检测状态（含告警限频时间戳），
+                 * 防止复位后残留旧的 last_level/last_sigma 被
+                 * anomaly_check_multi_dim() 用于虚假的多维度联动告警 */
+                g_ad.last_value[sensor_type]    = 0.0f;
+                g_ad.last_level[sensor_type]    = ANOMALY_LEVEL_NONE;
+                g_ad.last_sigma[sensor_type]    = 0.0f;
+                g_ad.last_alert_ms[sensor_type] = 0;
             }
         }
         k_mutex_unlock(&g_ad.lock);
@@ -336,12 +346,18 @@ static void anomaly_on_sensor_data(const gateway_sensor_data_t* sensor)
     g_ad.last_level[sensor->sensor_type] = level;
     g_ad.last_sigma[sensor->sensor_type] = sigma;
 
+    /* 事件 payload 用的基线快照：必须在 anomaly_update_window() 之前捕获。
+     * win->mean/win->stddev 在 update 之后会被本次（可能异常的）取值污染，
+     * 与事件字段 baseline_mean/baseline_stddev "检测所依据的基线" 的语义不符 */
+    float baseline_mean = win->mean;
+    float baseline_stddev = win->stddev;
+
     /* 更新窗口 */
     anomaly_update_window(win, sensor->value);
 
-    /* 发布异常事件 */
+    /* 发布异常事件（使用 update 前的基线快照） */
     if (level != ANOMALY_LEVEL_NONE) {
-        anomaly_publish_event(level, sensor, win->mean, win->stddev, sigma);
+        anomaly_publish_event(level, sensor, baseline_mean, baseline_stddev, sigma);
     }
 
     /* 多维度联动检测（仅在相关传感器数据到达时触发） */
@@ -428,6 +444,15 @@ static uint8_t anomaly_detect(sensor_window_t* win, float value,
     return ANOMALY_LEVEL_NONE;
 }
 
+/**
+ * @brief 发布异常事件
+ * @param level  异常级别（ANOMALY_LEVEL_*）
+ * @param sensor 触发本次检测的传感器数据
+ * @param mean   基线均值：调用方须传入 anomaly_update_window() 更新前的窗口
+ *               均值快照，代表"检测所依据的基线"，不包含当前 sensor->value
+ * @param stddev 基线标准差：语义同 mean，为 update 前的快照
+ * @param sigma  当前值相对基线的偏离倍数（|value-mean|/stddev）
+ */
 static void anomaly_publish_event(uint8_t level, const gateway_sensor_data_t* sensor,
                                    float mean, float stddev, float sigma)
 {
