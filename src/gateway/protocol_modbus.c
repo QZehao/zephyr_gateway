@@ -262,8 +262,13 @@ int protocol_modbus_read_holding_regs(uint8_t slave_id, uint16_t start_addr,
     req[6] = (uint8_t)(crc & 0xFF);
     req[7] = (uint8_t)(crc >> 8);
 
-    /* 清空接收缓冲（在 bus_mutex 保护下，无并发访问） */
-    g_modbus.rx_len = 0;
+    /* 清空接收缓冲：bus_mutex 只防事务交叉，挡不住 UART ISR 的 rx_buf[rx_len++]
+     * 写入，二者仍是并发访问，需用 irq_lock()/irq_unlock() 包住 */
+    {
+        unsigned int key = irq_lock();
+        g_modbus.rx_len = 0;
+        irq_unlock(key);
+    }
 
     /* 发送请求（modbus_send_frame 在 bus_mutex 下调用，内部不再单独加锁） */
     modbus_send_frame(req, sizeof(req));
@@ -378,6 +383,19 @@ static void modbus_send_frame(const uint8_t* data, size_t len)
     }
 }
 
+/**
+ * @brief 阻塞等待 Modbus 响应帧并拷出（按 inter-frame gap 判定帧完整）
+ *
+ * @param buf      输出缓冲区
+ * @param buf_len  输出缓冲区容量
+ * @param out_len  输出：实际拷贝的字节数
+ * @param timeout  等待超时时间
+ * @return 0 成功；-ETIMEDOUT 超时未收到完整帧
+ *
+ * @note 调用方须持有 g_modbus.bus_mutex（本函数不重复加锁）。内部读取/清零
+ *       g_modbus.rx_len 并 memcpy g_modbus.rx_buf 的临界区用 irq_lock()/irq_unlock()
+ *       保护，避免与 UART IRQ 上下文的 modbus_uart_irq_cb() 并发写撕裂数据。
+ */
 static int modbus_receive_response(uint8_t* buf, size_t buf_len,
                                     size_t* out_len, k_timeout_t timeout)
 {
@@ -394,14 +412,19 @@ static int modbus_receive_response(uint8_t* buf, size_t buf_len,
                 last_rx_len  = g_modbus.rx_len;
                 last_rx_time = k_uptime_get();
             } else if ((k_uptime_get() - last_rx_time) >= inter_frame_ms) {
-                /* 超过 inter-frame gap，认为帧已完整 */
+                /* 超过 inter-frame gap，认为帧已完整。rx_buf/rx_len 由 UART IRQ
+                 * 上下文（modbus_uart_irq_cb）写入，此处是线程上下文读取+清零，
+                 * 二者无锁并发会撕裂数据；用 irq_lock()/irq_unlock() 包住“拷贝+
+                 * 清零”临界区，临界区内只做定长 memcpy，保持极短。 */
+                unsigned int key = irq_lock();
                 size_t copy_len = g_modbus.rx_len;
                 if (copy_len > buf_len) {
                     copy_len = buf_len;
                 }
                 memcpy(buf, g_modbus.rx_buf, copy_len);
-                *out_len = copy_len;
                 g_modbus.rx_len = 0;
+                irq_unlock(key);
+                *out_len = copy_len;
                 return 0;
             }
         }

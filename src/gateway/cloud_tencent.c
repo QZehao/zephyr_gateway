@@ -53,18 +53,26 @@ LOG_MODULE_REGISTER(cloud_tencent, CONFIG_SYS_LOG_LEVEL);
 static int cloud_tencent_publish(cloud_msg_type_t type, const char* json_payload)
 {
     char topic[128];
+    int  len;
 
     switch (type) {
     case CLOUD_MSG_TELEMETRY:
-        snprintf(topic, sizeof(topic), "%s/%s/event",
-                 TENCENT_PRODUCT_ID, TENCENT_DEVICE_NAME);
+        /* 数据通道：${productId}/${deviceName}/data（见文件头 Topic 格式说明） */
+        len = snprintf(topic, sizeof(topic), "%s/%s/data",
+                        TENCENT_PRODUCT_ID, TENCENT_DEVICE_NAME);
         break;
     case CLOUD_MSG_ANOMALY:
-        snprintf(topic, sizeof(topic), "%s/%s/event",
-                 TENCENT_PRODUCT_ID, TENCENT_DEVICE_NAME);
+        /* 事件上报：${productId}/${deviceName}/event */
+        len = snprintf(topic, sizeof(topic), "%s/%s/event",
+                        TENCENT_PRODUCT_ID, TENCENT_DEVICE_NAME);
         break;
     default:
         return -EINVAL;
+    }
+
+    if (len <= 0 || (size_t)len >= sizeof(topic)) {
+        LOG_ERR("腾讯云 Topic 拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
     }
 
     return protocol_mqtt_publish(topic, json_payload,
@@ -128,13 +136,22 @@ const cloud_provider_t* cloud_tencent_get_provider(void)
  *
  * @note sdkappid/connid/expiry 来源：部署时可通过 Kconfig 或运行时接口注入。
  *       当前用固定占位值，生产环境需按腾讯云文档要求填充有效 sdkappid 和到期时间。
+ *
+ * @return 0 成功；snprintf 拼装被截断/失败返回 -ENOMEM；下发 MQTT 层参数失败
+ *         返回 protocol_mqtt_set_* 对应的负错误码。
  */
-static void tencent_setup_auth(void)
+static int tencent_setup_auth(void)
 {
+    int len;
+
     /* ClientId = productId + deviceName */
     char client_id[128];
-    snprintf(client_id, sizeof(client_id), "%s%s",
-             TENCENT_PRODUCT_ID, TENCENT_DEVICE_NAME);
+    len = snprintf(client_id, sizeof(client_id), "%s%s",
+                    TENCENT_PRODUCT_ID, TENCENT_DEVICE_NAME);
+    if (len <= 0 || (size_t)len >= sizeof(client_id)) {
+        LOG_ERR("腾讯云 clientId 拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
+    }
 
     /* sdkappid / connid / expiry 占位：无 Kconfig 来源时使用固定值
      * 生产环境应通过平台控制台获取 sdkappid，connid 建议随机，expiry 设合理有效期 */
@@ -144,8 +161,12 @@ static void tencent_setup_auth(void)
 
     /* Username = productId + deviceName;sdkappid;connid;expiry */
     char username[192];
-    snprintf(username, sizeof(username), "%s;%s;%s;%s",
-             client_id, sdkappid, connid, expiry);
+    len = snprintf(username, sizeof(username), "%s;%s;%s;%s",
+                    client_id, sdkappid, connid, expiry);
+    if (len <= 0 || (size_t)len >= sizeof(username)) {
+        LOG_ERR("腾讯云 username 拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
+    }
 
     /* 签名内容：username（含分号字段），与腾讯云常见实现对齐 */
     char password[128] = {0};
@@ -163,16 +184,33 @@ static void tencent_setup_auth(void)
 
     /* 构造腾讯云 broker 地址 */
     char broker[128];
-    snprintf(broker, sizeof(broker),
-             "%s.iotcloud.tencentdevices.com", TENCENT_PRODUCT_ID);
+    len = snprintf(broker, sizeof(broker),
+                    "%s.iotcloud.tencentdevices.com", TENCENT_PRODUCT_ID);
+    if (len <= 0 || (size_t)len >= sizeof(broker)) {
+        LOG_ERR("腾讯云 broker 地址拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
+    }
 
-    /* 下发到 MQTT 层 */
-    protocol_mqtt_set_client_id(client_id);
-    protocol_mqtt_set_auth(username, password);
-    protocol_mqtt_set_broker(broker, 1883);
+    /* 下发到 MQTT 层，逐一检查返回值 */
+    ret = protocol_mqtt_set_client_id(client_id);
+    if (ret != 0) {
+        LOG_ERR("设置 MQTT clientId 失败: %d", ret);
+        return ret;
+    }
+    ret = protocol_mqtt_set_auth(username, password);
+    if (ret != 0) {
+        LOG_ERR("设置 MQTT 认证失败: %d", ret);
+        return ret;
+    }
+    ret = protocol_mqtt_set_broker(broker, 1883);
+    if (ret != 0) {
+        LOG_ERR("设置 MQTT broker 失败: %d", ret);
+        return ret;
+    }
 
     LOG_INF("腾讯云 MQTT 参数: clientId=%s user=%s broker=%s",
             client_id, username, broker);
+    return 0;
 }
 
 /* =============================================================================
@@ -183,14 +221,24 @@ static int cloud_tencent_init(void* config)
 {
     ARG_UNUSED(config);
     LOG_INF("初始化腾讯云 Provider...");
-    cloud_provider_register(cloud_tencent_get_provider());
+
+    int ret = cloud_provider_register(cloud_tencent_get_provider());
+    if (ret != 0) {
+        LOG_ERR("腾讯云 Provider 注册失败: %d", ret);
+        return ret;
+    }
+
     LOG_INF("腾讯云 Provider 初始化完成");
     return 0;
 }
 
 static int cloud_tencent_start(void)
 {
-    tencent_setup_auth();
+    int ret = tencent_setup_auth();
+    if (ret != 0) {
+        LOG_ERR("腾讯云 Provider 启动失败: %d", ret);
+        return ret;
+    }
     LOG_INF("腾讯云 Provider 已启动");
     return 0;
 }

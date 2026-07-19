@@ -59,8 +59,12 @@ static int cloud_aws_publish(cloud_msg_type_t type, const char* json_payload)
 
     /* AWS Shadow update topic */
     char topic[128];
-    snprintf(topic, sizeof(topic),
-             "$aws/things/%s/shadow/update", AWS_THING_NAME);
+    int  len = snprintf(topic, sizeof(topic),
+                         "$aws/things/%s/shadow/update", AWS_THING_NAME);
+    if (len <= 0 || (size_t)len >= sizeof(topic)) {
+        LOG_ERR("AWS Topic 拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
+    }
 
     /* AWS IoT 要求 TLS (8883)，当前项目未启用 TLS，publish 会失败。
      * 先尝试用明文端口发送（仅用于测试），生产必须启用 TLS。 */
@@ -126,28 +130,50 @@ const cloud_provider_t* cloud_aws_get_provider(void)
  *     TLS_CREDENTIAL_CA_CERTIFICATE   → AmazonRootCA1.pem
  *     TLS_CREDENTIAL_SERVER_CERTIFICATE → device-cert.pem（若双向 TLS 要求）
  *     TLS_CREDENTIAL_PRIVATE_KEY      → private-key.pem
+ *
+ * @return 0 成功；snprintf 拼装被截断/失败返回 -ENOMEM；下发 MQTT 层参数失败
+ *         返回 protocol_mqtt_set_* 对应的负错误码。
  */
-static void aws_setup_connection(void)
+static int aws_setup_connection(void)
 {
+    int ret;
+
     /* clientId = thingName */
-    protocol_mqtt_set_client_id(AWS_THING_NAME);
+    ret = protocol_mqtt_set_client_id(AWS_THING_NAME);
+    if (ret != 0) {
+        LOG_ERR("设置 MQTT clientId 失败: %d", ret);
+        return ret;
+    }
 
     /* AWS 使用证书认证，不设置 username/password */
-    protocol_mqtt_set_auth(NULL, NULL);
+    ret = protocol_mqtt_set_auth(NULL, NULL);
+    if (ret != 0) {
+        LOG_ERR("清除 MQTT 认证失败: %d", ret);
+        return ret;
+    }
+
+    char broker[128];
+    int  len = snprintf(broker, sizeof(broker), "%s", AWS_ENDPOINT);
+    if (len <= 0 || (size_t)len >= sizeof(broker)) {
+        LOG_ERR("AWS broker 地址拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
+    }
 
 #if defined(CONFIG_GATEWAY_AWS_TLS)
     /* TLS 已启用：设置 sec_tag 和 SNI，证书实体须部署期注入 */
     sec_tag_t tls_sec_tags[] = { CONFIG_GATEWAY_AWS_TLS_SEC_TAG };
-    int ret = protocol_mqtt_set_tls(tls_sec_tags, ARRAY_SIZE(tls_sec_tags), AWS_ENDPOINT);
+    ret = protocol_mqtt_set_tls(tls_sec_tags, ARRAY_SIZE(tls_sec_tags), AWS_ENDPOINT);
     if (ret != 0) {
         LOG_WRN("TLS 配置失败 (%d)，回退到明文连接", ret);
         protocol_mqtt_clear_tls();
     }
 
     /* broker:8883（TLS 端口） */
-    char broker[128];
-    snprintf(broker, sizeof(broker), "%s", AWS_ENDPOINT);
-    protocol_mqtt_set_broker(broker, 8883);
+    ret = protocol_mqtt_set_broker(broker, 8883);
+    if (ret != 0) {
+        LOG_ERR("设置 MQTT broker 失败: %d", ret);
+        return ret;
+    }
 
     LOG_INF("AWS IoT Core 连接参数: endpoint=%s thing=%s port=8883 (TLS)",
             AWS_ENDPOINT, AWS_THING_NAME);
@@ -156,14 +182,18 @@ static void aws_setup_connection(void)
 #else
     /* TLS 未启用：使用明文 1883（仅测试，AWS 生产必须启用 TLS） */
     protocol_mqtt_clear_tls();
-    char broker[128];
-    snprintf(broker, sizeof(broker), "%s", AWS_ENDPOINT);
-    protocol_mqtt_set_broker(broker, 1883);
+    ret = protocol_mqtt_set_broker(broker, 1883);
+    if (ret != 0) {
+        LOG_ERR("设置 MQTT broker 失败: %d", ret);
+        return ret;
+    }
 
     LOG_INF("AWS IoT Core 连接参数: endpoint=%s thing=%s port=1883 (明文)",
             AWS_ENDPOINT, AWS_THING_NAME);
     LOG_WRN("AWS TLS 未启用（CONFIG_GATEWAY_AWS_TLS=n），生产环境必须配置 X.509 双向 TLS");
 #endif /* CONFIG_GATEWAY_AWS_TLS */
+
+    return 0;
 }
 
 /* =============================================================================
@@ -174,14 +204,24 @@ static int cloud_aws_init(void* config)
 {
     ARG_UNUSED(config);
     LOG_INF("初始化 AWS Provider...");
-    cloud_provider_register(cloud_aws_get_provider());
+
+    int ret = cloud_provider_register(cloud_aws_get_provider());
+    if (ret != 0) {
+        LOG_ERR("AWS Provider 注册失败: %d", ret);
+        return ret;
+    }
+
     LOG_INF("AWS Provider 初始化完成");
     return 0;
 }
 
 static int cloud_aws_start(void)
 {
-    aws_setup_connection();
+    int ret = aws_setup_connection();
+    if (ret != 0) {
+        LOG_ERR("AWS Provider 启动失败: %d", ret);
+        return ret;
+    }
     LOG_INF("AWS Provider 已启动");
     return 0;
 }

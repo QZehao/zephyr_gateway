@@ -164,9 +164,20 @@ int offline_cache_stop(void)
     if (g_cache.status != MODULE_STATUS_RUNNING) {
         return 0;
     }
-    /* 取消挂起的批量上报，避免模块停止后工作项仍执行 */
-    k_work_cancel_delayable(&g_cache.upload_work);
+
+    /* 取消挂起的批量上报，并同步等待正在执行的 handler 结束（若有），避免
+     * cache_upload_work_handler 在停止后仍并发访问 g_cache 与本函数的
+     * cache_save_state() 竞争。cache_upload_work_handler 不会反向等待本函数
+     * 所在线程，二者之间不存在死锁环 */
+    struct k_work_sync sync;
+    k_work_cancel_delayable_sync(&g_cache.upload_work, &sync);
+
+    /* 与其余调用点（cache_on_cloud_upload/CACHE_CMD_CLEAR/cache_upload_work_handler）
+     * 保持一致的加锁纪律，持锁后再持久化状态，避免与并发访问 g_cache 的路径竞争 */
+    k_mutex_lock(&g_cache.lock, K_FOREVER);
     cache_save_state();
+    k_mutex_unlock(&g_cache.lock);
+
     g_cache.status = MODULE_STATUS_STOPPED;
     LOG_INF("离线缓存模块已停止");
     return 0;

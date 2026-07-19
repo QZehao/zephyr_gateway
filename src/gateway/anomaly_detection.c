@@ -40,6 +40,10 @@ BUILD_ASSERT(MAX_SENSOR_TYPES >= SENSOR_TYPE_COUNT,
 #define ANOMALY_LEVEL_CRITICAL  2
 #define ANOMALY_LEVEL_EMERGENCY 3
 #define ANOMALY_STDDEV_MIN_VALID 0.001f
+/* 输入合法性上限：超过此量级视为异常输入（如乘法溢出/传感器故障），直接丢弃 */
+#define ANOMALY_VALUE_ABS_LIMIT 1e9f
+/* 丢弃样本告警的最小日志间隔，避免连续非法输入刷屏 */
+#define ANOMALY_DROPPED_LOG_INTERVAL_MS 1000
 
 /* =============================================================================
  * 内部数据结构
@@ -80,6 +84,9 @@ typedef struct {
     float   last_value[MAX_SENSOR_TYPES];
     uint8_t last_level[MAX_SENSOR_TYPES];
     float   last_sigma[MAX_SENSOR_TYPES];
+    /* 非法输入统计：isfinite/量级校验丢弃的样本数与限频日志时间戳 */
+    uint32_t dropped_samples;
+    uint32_t last_dropped_log_ms;
 } anomaly_detection_cb_t;
 
 /* =============================================================================
@@ -224,6 +231,10 @@ int anomaly_detection_control(int cmd, void* arg)
     case ANOMALY_CMD_SET_THRESHOLD:
         if (arg != NULL) {
             anomaly_threshold_cmd_t* tcmd = (anomaly_threshold_cmd_t*)arg;
+            if (tcmd->sensor_type >= MAX_SENSOR_TYPES) {
+                k_mutex_unlock(&g_ad.lock);
+                return -1;
+            }
             g_ad.warning_sigma[tcmd->sensor_type]  = tcmd->warning_sigma;
             g_ad.critical_sigma[tcmd->sensor_type] = tcmd->critical_sigma;
             g_ad.emergency_sigma[tcmd->sensor_type]= tcmd->emergency_sigma;
@@ -298,6 +309,21 @@ static void anomaly_on_sensor_data(const gateway_sensor_data_t* sensor)
     }
 
     k_mutex_lock(&g_ad.lock, K_FOREVER);
+
+    /* 输入合法性校验：拒绝非有限值（Inf/NaN）或超量级数值，避免其进入滑动窗口后
+     * 使 sum_sq 溢出为 Inf，进而产生 NaN 均值/标准差导致检测永久失效 */
+    if (!isfinite(sensor->value) || fabsf(sensor->value) >= ANOMALY_VALUE_ABS_LIMIT) {
+        g_ad.dropped_samples++;
+        uint32_t now = k_uptime_get_32();
+        if ((now - g_ad.last_dropped_log_ms) >= ANOMALY_DROPPED_LOG_INTERVAL_MS) {
+            g_ad.last_dropped_log_ms = now;
+            LOG_WRN("传感器 %u 数值非法(非有限或超量级): %.3e，样本已丢弃 (累计 %u)",
+                    sensor->sensor_type, (double)sensor->value,
+                    (unsigned)g_ad.dropped_samples);
+        }
+        k_mutex_unlock(&g_ad.lock);
+        return;
+    }
 
     sensor_window_t* win = &g_ad.windows[sensor->sensor_type];
 

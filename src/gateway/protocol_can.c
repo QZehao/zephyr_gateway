@@ -256,6 +256,13 @@ static void can_state_callback(const struct device* dev, enum can_state state,
     LOG_INF("CAN 状态变化: %s", state_str);
 }
 
+/**
+ * @brief CAN 接收线程：从 msgq 取帧、解析传感器数据并发布原始帧
+ *
+ * @note frame.dlc 在 CAN FD 模式下上限为 CAN_MAX_DLEN(64)，超过
+ *       gateway_can_frame_t.data 的固定 8 字节容量时会被钳位截断，
+ *       避免拷贝时越界写入结构体缓冲区。
+ */
 static void can_rx_thread(void* p1, void* p2, void* p3)
 {
     ARG_UNUSED(p1);
@@ -297,15 +304,24 @@ static void can_rx_thread(void* p1, void* p2, void* p3)
 
             (void)gateway_sensor_publish(&sensor);
 
-            /* 原始 CAN 帧（无消费者，预留 trace） */
+            /* 原始 CAN 帧（无消费者，预留 trace）。frame.dlc 在 CAN FD 模式下上限为
+             * CAN_MAX_DLEN(64)，而 gateway_can_frame_t.data 固定 8 字节，需先钳位
+             * 再拷贝，避免结构体缓冲区溢出；超限时丢弃多余字节并记录告警，
+             * can_evt.dlc 使用钳位后的值，与实际拷贝的数据长度保持一致。 */
             gateway_can_frame_t can_evt = {
                 .timestamp = sensor.timestamp,
                 .id = frame.id,
-                .dlc = frame.dlc,
                 .rtr = (frame.flags & CAN_FRAME_RTR) != 0,
                 .ext_id = (frame.flags & CAN_FRAME_IDE) != 0,
             };
-            memcpy(can_evt.data, frame.data, frame.dlc);
+            uint8_t can_copy_len = frame.dlc;
+            if (can_copy_len > sizeof(can_evt.data)) {
+                LOG_WRN("CAN 帧 dlc=%u 超过缓冲区容量 %zu，已截断", frame.dlc,
+                        sizeof(can_evt.data));
+                can_copy_len = sizeof(can_evt.data);
+            }
+            can_evt.dlc = can_copy_len;
+            memcpy(can_evt.data, frame.data, can_copy_len);
             (void)gateway_can_raw_publish(&can_evt);
 
             LOG_DBG("CAN RX: id=0x%x dlc=%u val=%.2f", frame.id, frame.dlc,

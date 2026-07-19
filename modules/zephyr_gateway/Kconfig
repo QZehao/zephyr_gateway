@@ -131,9 +131,13 @@ config GATEWAY_ANOMALY_EMERGENCY_SIGMA
 config GATEWAY_CLOUD_UPLOAD_ENABLE
 	bool "Enable cloud data upload module"
 	depends on ZEPHYR_GATEWAY_BUSINESS
+	depends on GATEWAY_MQTT_ENABLE
 	default y
 	help
 	  Subscribe to sensor/anomaly events and upload via cloud provider.
+	  Requires GATEWAY_MQTT_ENABLE: without it no cloud provider can be
+	  selected/compiled (see GATEWAY_CLOUD_PROVIDER choice below), which
+	  would otherwise silently produce a zero-Provider configuration.
 
 if GATEWAY_CLOUD_UPLOAD_ENABLE
 

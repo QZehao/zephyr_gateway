@@ -88,7 +88,11 @@ static int cloud_private_init(void* config)
     ARG_UNUSED(config);
     LOG_INF("初始化私有云 Provider...");
 
-    cloud_provider_register(cloud_private_get_provider());
+    int ret = cloud_provider_register(cloud_private_get_provider());
+    if (ret != 0) {
+        LOG_ERR("私有云 Provider 注册失败: %d", ret);
+        return ret;
+    }
 
     LOG_INF("私有云 Provider 初始化完成");
     return 0;

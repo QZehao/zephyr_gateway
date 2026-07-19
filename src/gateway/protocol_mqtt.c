@@ -18,6 +18,7 @@
 #include <zephyr/net/socket.h>
 #include <zephyr/net/tls_credentials.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/util.h>
 #include <string.h>
 
 #include <zeplod/event_system.h>
@@ -33,6 +34,8 @@ LOG_MODULE_REGISTER(protocol_mqtt, CONFIG_SYS_LOG_LEVEL);
 #define MQTT_THREAD_STACK_SIZE GATEWAY_THREAD_STACK_SIZE_LARGE
 #define MQTT_RX_BUF_SIZE       256
 #define MQTT_TX_BUF_SIZE       256
+/** mqtt_on_command() 命令钩子单次接收的最大 payload 字节数（栈上缓冲容量） */
+#define MQTT_CMD_PAYLOAD_MAX   128
 #define RECONNECT_MIN_MS       GATEWAY_MQTT_RECONNECT_MIN_MS
 #define RECONNECT_MAX_MS       GATEWAY_MQTT_RECONNECT_MAX_MS
 #define BROKER_ADDR_MAX_LEN    64
@@ -72,14 +75,18 @@ typedef struct {
     /* Broker（支持运行时设置） */
     char                 broker_addr[BROKER_ADDR_MAX_LEN];
     uint16_t             broker_port;
-    /* 认证（由 cloud provider 设置） */
-    char                 mqtt_username[64];
+    /* 认证（由 cloud provider 设置）；容量契约：超长由 set_auth() 拒绝，不静默截断 */
+    char                 mqtt_username[192];
     char                 mqtt_password[128];
     bool                 has_auth;
     struct mqtt_utf8     mqtt_user_name;
     struct mqtt_utf8     mqtt_password_utf8;
     /* 运行时 clientId（由 cloud provider 通过 protocol_mqtt_set_client_id 设置） */
-    char                 client_id[128];
+    char                 client_id[192];
+    /* 连接期 clientId 快照：mqtt_do_connect() 持锁拷贝自 client_id，供本次连接
+     * 全程（含 mqtt_client.client_id 与 evt_handler 拼接订阅主题）稳定使用，
+     * 避免与运行时 protocol_mqtt_set_client_id() 的写入竞争 */
+    char                 conn_client_id[192];
     /* TLS 配置（CONFIG_MQTT_LIB_TLS 守护） */
 #if defined(CONFIG_MQTT_LIB_TLS)
     bool                 use_tls;
@@ -106,7 +113,10 @@ static int  mqtt_do_connect(void);
 static void mqtt_do_disconnect(void);
 static void mqtt_publish_state_event(bool connected);
 static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* evt);
-static int  resolve_broker_addr(struct sockaddr_storage* addr);
+static int  resolve_broker_addr(struct sockaddr_storage* addr, const char* broker_addr,
+                                 uint16_t broker_port);
+static void mqtt_on_command(const char* topic, size_t topic_len,
+                             const uint8_t* payload, size_t payload_len);
 
 /* =============================================================================
  * 模块接口实现
@@ -242,8 +252,9 @@ int protocol_mqtt_control(int cmd, void* arg)
 
 bool protocol_mqtt_is_connected(void)
 {
+    /* CONNECTED 即可发布，SUBSCRIBED 仅表示命令通道就绪，订阅被拒不应阻断上行 */
     return (g_mqtt.status == MODULE_STATUS_RUNNING &&
-            g_mqtt.state == MQTT_STATE_SUBSCRIBED);
+            g_mqtt.state >= MQTT_STATE_CONNECTED);
 }
 
 int protocol_mqtt_publish(const char* topic, const char* payload, uint16_t payload_len)
@@ -286,6 +297,16 @@ void protocol_mqtt_get_stats(uint32_t* connect_count, uint32_t* disconnect_count
 
 int protocol_mqtt_set_auth(const char* username, const char* password)
 {
+    if (username != NULL && password != NULL) {
+        if (strlen(username) >= sizeof(g_mqtt.mqtt_username) ||
+            strlen(password) >= sizeof(g_mqtt.mqtt_password)) {
+            LOG_ERR("MQTT 认证参数超长: user_len=%zu(max %zu) pass_len=%zu(max %zu)",
+                    strlen(username), sizeof(g_mqtt.mqtt_username) - 1,
+                    strlen(password), sizeof(g_mqtt.mqtt_password) - 1);
+            return -EINVAL;
+        }
+    }
+
     k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
 
     if (username != NULL && password != NULL) {
@@ -314,6 +335,11 @@ int protocol_mqtt_set_broker(const char* addr, uint16_t port)
     if (addr == NULL || port == 0) {
         return -EINVAL;
     }
+    if (strlen(addr) >= sizeof(g_mqtt.broker_addr)) {
+        LOG_ERR("MQTT broker 地址超长: len=%zu(max %zu)", strlen(addr),
+                sizeof(g_mqtt.broker_addr) - 1);
+        return -EINVAL;
+    }
 
     k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
     strncpy(g_mqtt.broker_addr, addr, sizeof(g_mqtt.broker_addr) - 1);
@@ -331,6 +357,11 @@ int protocol_mqtt_set_broker(const char* addr, uint16_t port)
 int protocol_mqtt_set_client_id(const char* id)
 {
     if (id == NULL || id[0] == '\0') {
+        return -EINVAL;
+    }
+    if (strlen(id) >= sizeof(g_mqtt.client_id)) {
+        LOG_ERR("MQTT clientId 超长: len=%zu(max %zu)", strlen(id),
+                sizeof(g_mqtt.client_id) - 1);
         return -EINVAL;
     }
 
@@ -405,6 +436,13 @@ void protocol_mqtt_clear_tls(void)
  * 内部函数
  * ============================================================================= */
 
+/**
+ * @brief MQTT 工作线程：驱动连接状态机与 mqtt_input/mqtt_live 轮询
+ *
+ * @note mqtt_input()/mqtt_live() 均访问 g_mqtt.client，与持锁的
+ *       protocol_mqtt_publish() 竞争；本函数对每次调用单独加解锁
+ *       client_mutex（不整段持锁），避免长时间饿死 publish() 侧。
+ */
 static void mqtt_worker_thread(void* p1, void* p2, void* p3)
 {
     ARG_UNUSED(p1);
@@ -448,14 +486,22 @@ static void mqtt_worker_thread(void* p1, void* p2, void* p3)
         case MQTT_STATE_CONNECTING:
         case MQTT_STATE_CONNECTED:
         case MQTT_STATE_SUBSCRIBED: {
+            /* mqtt_input/mqtt_live 访问 g_mqtt.client，与持锁的 protocol_mqtt_publish()
+             * 竞争；逐次调用单独加解锁，不整段持锁以免饿死 publish()。mqtt_evt_handler
+             * 在 mqtt_input() 内部同线程同步触发，其中的 mqtt_subscribe() 调用不访问
+             * client_mutex，不会造成死锁。 */
+            k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
             int ret = mqtt_input(&g_mqtt.client);
+            k_mutex_unlock(&g_mqtt.client_mutex);
             if (ret != 0 && ret != -EAGAIN) {
                 LOG_WRN("MQTT input 错误: %d", ret);
                 mqtt_do_disconnect();
                 break;
             }
 
+            k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
             ret = mqtt_live(&g_mqtt.client);
+            k_mutex_unlock(&g_mqtt.client_mutex);
             if (ret != 0 && ret != -EAGAIN) {
                 LOG_WRN("MQTT live 错误: %d", ret);
                 mqtt_do_disconnect();
@@ -472,13 +518,44 @@ static void mqtt_worker_thread(void* p1, void* p2, void* p3)
     LOG_INF("MQTT 工作线程已退出");
 }
 
+/**
+ * @brief 发起一次 MQTT 连接
+ *
+ * @return 0 表示连接请求已发出（实际结果见 CONNACK 回调）；非 0 为失败错误码
+ *
+ * @note 持锁快照 broker 地址/端口、clientId、认证参数后再使用，避免与
+ *       protocol_mqtt_set_broker()/set_client_id()/set_auth() 的运行时写入
+ *       竞争；mqtt_connect() 调用本身也单独加锁，与 protocol_mqtt_publish()
+ *       互斥访问 g_mqtt.client。
+ */
 static int mqtt_do_connect(void)
 {
     int ret;
 
     memset(&g_mqtt.client, 0, sizeof(g_mqtt.client));
 
-    ret = resolve_broker_addr(&g_mqtt.broker);
+    /* 持锁快照本次连接使用的 broker 地址/端口、clientId 与认证参数，避免与
+     * protocol_mqtt_set_broker()/set_client_id()/set_auth() 的运行时写入竞争。
+     * clientId 需要在整个连接期间保持稳定（mqtt_client.client_id 与
+     * mqtt_evt_handler 拼接订阅主题都要用同一份值），因此快照到持久缓冲
+     * g_mqtt.conn_client_id，而非仅存活于本函数栈帧的局部变量。 */
+    k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
+    char broker_addr[BROKER_ADDR_MAX_LEN];
+    strncpy(broker_addr, g_mqtt.broker_addr, sizeof(broker_addr) - 1);
+    broker_addr[sizeof(broker_addr) - 1] = '\0';
+    uint16_t broker_port = g_mqtt.broker_port;
+    strncpy(g_mqtt.conn_client_id, g_mqtt.client_id, sizeof(g_mqtt.conn_client_id) - 1);
+    g_mqtt.conn_client_id[sizeof(g_mqtt.conn_client_id) - 1] = '\0';
+    bool has_auth = g_mqtt.has_auth;
+    char username[sizeof(g_mqtt.mqtt_username)] = {0};
+    char password[sizeof(g_mqtt.mqtt_password)] = {0};
+    if (has_auth) {
+        strncpy(username, g_mqtt.mqtt_username, sizeof(username) - 1);
+        strncpy(password, g_mqtt.mqtt_password, sizeof(password) - 1);
+    }
+    k_mutex_unlock(&g_mqtt.client_mutex);
+
+    ret = resolve_broker_addr(&g_mqtt.broker, broker_addr, broker_port);
     if (ret != 0) {
         LOG_ERR("解析 broker 地址失败");
         return ret;
@@ -488,9 +565,9 @@ static int mqtt_do_connect(void)
 
     g_mqtt.client.broker = &g_mqtt.broker;
     g_mqtt.client.evt_cb = mqtt_evt_handler;
-    /* 使用运行时 clientId（可由 cloud provider 通过 protocol_mqtt_set_client_id 设置） */
-    g_mqtt.client.client_id.utf8 = (uint8_t*)g_mqtt.client_id;
-    g_mqtt.client.client_id.size = strlen(g_mqtt.client_id);
+    /* 使用本次连接快照的 clientId（可由 cloud provider 通过 protocol_mqtt_set_client_id 设置） */
+    g_mqtt.client.client_id.utf8 = (uint8_t*)g_mqtt.conn_client_id;
+    g_mqtt.client.client_id.size = strlen(g_mqtt.conn_client_id);
     g_mqtt.client.protocol_version = MQTT_VERSION_3_1_1;
     g_mqtt.client.rx_buf = g_mqtt.rx_buffer;
     g_mqtt.client.rx_buf_size = sizeof(g_mqtt.rx_buffer);
@@ -499,17 +576,6 @@ static int mqtt_do_connect(void)
 
     /* 设置 keepalive */
     g_mqtt.client.keepalive = GATEWAY_MQTT_KEEPALIVE_S;
-
-    /* 读取认证参数时持有锁 */
-    k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
-    bool has_auth = g_mqtt.has_auth;
-    char username[64] = {0};
-    char password[128] = {0};
-    if (has_auth) {
-        strncpy(username, g_mqtt.mqtt_username, sizeof(username) - 1);
-        strncpy(password, g_mqtt.mqtt_password, sizeof(password) - 1);
-    }
-    k_mutex_unlock(&g_mqtt.client_mutex);
 
     /* 设置认证（如有） */
     if (has_auth) {
@@ -543,7 +609,11 @@ static int mqtt_do_connect(void)
     g_mqtt.client.transport.type = MQTT_TRANSPORT_NON_SECURE;
 #endif /* CONFIG_MQTT_LIB_TLS */
 
+    /* mqtt_connect() 访问 g_mqtt.client，与持锁的 protocol_mqtt_publish() 竞争，
+     * 单独加解锁包住本次调用 */
+    k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
     ret = mqtt_connect(&g_mqtt.client);
+    k_mutex_unlock(&g_mqtt.client_mutex);
     if (ret != 0) {
         LOG_ERR("MQTT 连接失败: %d", ret);
         return ret;
@@ -553,6 +623,12 @@ static int mqtt_do_connect(void)
     return 0;
 }
 
+/**
+ * @brief 断开当前 MQTT 连接并复位状态（幂等：已断开时空操作）
+ *
+ * @note 全程持有 client_mutex，与 protocol_mqtt_publish() 及 worker 线程
+ *       的 mqtt_input()/mqtt_live()/mqtt_connect() 互斥访问 g_mqtt.client。
+ */
 static void mqtt_do_disconnect(void)
 {
     k_mutex_lock(&g_mqtt.client_mutex, K_FOREVER);
@@ -575,6 +651,37 @@ static void mqtt_publish_state_event(bool connected)
     }
 }
 
+/**
+ * @brief MQTT 下行命令分发钩子（扩展点，当前未实现具体命令）
+ *
+ * @param topic       命令主题字符串（非 NUL 结尾，长度见 topic_len）
+ * @param topic_len   主题长度
+ * @param payload     命令载荷（最多 MQTT_CMD_PAYLOAD_MAX 字节，超出部分已在
+ *                    调用方排空丢弃，不会出现在这里）
+ * @param payload_len 载荷实际捕获长度
+ *
+ * @note 当前仅记录日志。后续如需支持云端下行控制指令（如远程重启、参数下发），
+ *       在此解析 payload（如 JSON）并路由到具体命令处理器。
+ */
+static void mqtt_on_command(const char* topic, size_t topic_len,
+                             const uint8_t* payload, size_t payload_len)
+{
+    ARG_UNUSED(payload);
+    LOG_INF("MQTT 命令主题 %.*s 载荷 %zu 字节（命令分发未实现，扩展点见 mqtt_on_command）",
+            (int)topic_len, topic, payload_len);
+}
+
+/**
+ * @brief Zephyr MQTT 库事件回调（CONNACK/DISCONNECT/PUBLISH/SUBACK 等）
+ *
+ * @param client 触发事件的 MQTT 客户端（即 &g_mqtt.client）
+ * @param evt    事件参数
+ *
+ * @note 由 mqtt_input() 在 worker 线程上下文同步调用（非独立线程/ISR），
+ *       此处对 g_mqtt.state 等字段的写入与 worker 线程本身天然同线程有序，
+ *       无需额外加锁；CONNACK 成功即发布 CLOUD_CONNECTED，SUBSCRIBED 状态
+ *       改为在 SUBACK 校验通过后才置位（见 MQTT_EVT_SUBACK 分支）。
+ */
 static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* evt)
 {
     ARG_UNUSED(client);
@@ -590,11 +697,14 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
         g_mqtt.state = MQTT_STATE_CONNECTED;
         g_mqtt.connect_count++;
         g_mqtt.reconnect_delay_ms = RECONNECT_MIN_MS;
+        /* CONNACK 成功即视为云连接建立；SUBSCRIBED 是更细的“命令通道已就绪”状态，
+         * 不再等订阅结果才发布 CLOUD_CONNECTED（订阅失败不代表连接本身失败）。 */
+        mqtt_publish_state_event(true);
         LOG_INF("MQTT 已连接");
 
-        /* 订阅命令主题（使用运行时 clientId，拼接到静态缓冲）*/
-        static char cmd_topic[160];
-        snprintf(cmd_topic, sizeof(cmd_topic), "gateway/cmd/%s", g_mqtt.client_id);
+        /* 订阅命令主题（使用本次连接快照的 clientId g_mqtt.conn_client_id，拼接到静态缓冲）*/
+        static char cmd_topic[224];
+        snprintf(cmd_topic, sizeof(cmd_topic), "gateway/cmd/%s", g_mqtt.conn_client_id);
         struct mqtt_topic topic = {
             .topic = {
                 .utf8 = (uint8_t*)cmd_topic,
@@ -612,8 +722,7 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
             atomic_set(&g_mqtt.pending_disconnect, 1);
             break;
         }
-        g_mqtt.state = MQTT_STATE_SUBSCRIBED;
-        mqtt_publish_state_event(true);
+        /* 订阅请求已发出，等待 MQTT_EVT_SUBACK 校验结果后才置 SUBSCRIBED */
         break;
 
     case MQTT_EVT_DISCONNECT:
@@ -627,22 +736,90 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
 
     case MQTT_EVT_PUBLISH: {
         const struct mqtt_publish_param* p = &evt->param.publish;
+        uint32_t payload_len = p->message.payload.len;
         g_mqtt.msg_rx_count++;
-        LOG_INF("MQTT 收到消息: topic=%.*s", p->message.topic.topic.size,
-                p->message.topic.topic.utf8);
+        LOG_INF("MQTT 收到消息: topic=%.*s len=%u", p->message.topic.topic.size,
+                p->message.topic.topic.utf8, payload_len);
+
+        /* PUBLISH 事件本身不含 payload 数据，必须调用 mqtt_read_publish_payload_blocking()
+         * 主动读出并排空，否则残留数据会污染下一个包的解析。命令主题预期较短：整段
+         * （最多 MQTT_CMD_PAYLOAD_MAX 字节）读入栈缓冲供 mqtt_on_command() 使用；
+         * 超出部分按 128B 分段继续读出丢弃，只为排空缓冲，不再保留。 */
+        uint8_t cmd_buf[MQTT_CMD_PAYLOAD_MAX];
+        size_t  captured_len = 0;
+        size_t  first_read = MIN((size_t)payload_len, sizeof(cmd_buf));
+        if (first_read > 0) {
+            ret = mqtt_read_publish_payload_blocking(client, cmd_buf, first_read);
+            if (ret > 0) {
+                captured_len = (size_t)ret;
+            } else {
+                LOG_WRN("MQTT PUBLISH payload 读取失败: %d", ret);
+            }
+        }
+        uint32_t remaining = (payload_len > captured_len) ?
+                              (payload_len - (uint32_t)captured_len) : 0;
+        while (remaining > 0) {
+            uint8_t discard[128];
+            size_t  chunk_len = MIN((size_t)remaining, sizeof(discard));
+            ret = mqtt_read_publish_payload_blocking(client, discard, chunk_len);
+            if (ret <= 0) {
+                LOG_WRN("MQTT PUBLISH payload 排空失败: %d", ret);
+                break;
+            }
+            remaining -= (uint32_t)ret;
+        }
+
+        mqtt_on_command((const char*)p->message.topic.topic.utf8,
+                         p->message.topic.topic.size, cmd_buf, captured_len);
+
+        /* QoS1 消息需回 PUBACK 确认，否则 broker 会重传 */
+        if (p->message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE) {
+            struct mqtt_puback_param puback_param = { .message_id = p->message_id };
+            ret = mqtt_publish_qos1_ack(client, &puback_param);
+            if (ret != 0) {
+                LOG_WRN("MQTT PUBACK 发送失败: %d", ret);
+            }
+        }
         break;
     }
 
-    case MQTT_EVT_SUBACK:
-        LOG_DBG("MQTT SUBACK");
+    case MQTT_EVT_SUBACK: {
+        const struct mqtt_suback_param* p = &evt->param.suback;
+        if (evt->result != 0) {
+            /* evt->result 反映 SUBACK 报文解码是否成功，非订阅授予结果 */
+            LOG_ERR("MQTT SUBACK 解码错误: %d", evt->result);
+            break;
+        }
+        uint8_t return_code = MQTT_SUBACK_FAILURE;
+        if (p->return_codes.data != NULL && p->return_codes.len > 0) {
+            return_code = p->return_codes.data[0];
+        }
+        if (return_code == MQTT_SUBACK_FAILURE) {
+            /* 订阅被 broker 拒绝：保持 CONNECTED，不引入重试，仅记录错误 */
+            LOG_ERR("MQTT 订阅被 Broker 拒绝 (SUBACK failure)");
+            break;
+        }
+        g_mqtt.state = MQTT_STATE_SUBSCRIBED;
+        LOG_INF("MQTT 订阅成功 (SUBACK), qos=%u", return_code);
         break;
+    }
 
     default:
         break;
     }
 }
 
-static int resolve_broker_addr(struct sockaddr_storage* addr)
+/**
+ * @brief 解析 broker 地址并写入 sockaddr_storage
+ *
+ * @param addr        输出：解析结果
+ * @param broker_addr broker 主机名/IP（调用方已持锁快照，避免直接读取 g_mqtt.broker_addr
+ *                     与 protocol_mqtt_set_broker() 竞争）
+ * @param broker_port broker 端口（同上，调用方快照值）
+ * @return 0 成功；非 0 为 getaddrinfo 错误码
+ */
+static int resolve_broker_addr(struct sockaddr_storage* addr, const char* broker_addr,
+                                uint16_t broker_port)
 {
     struct zsock_addrinfo* res;
     struct zsock_addrinfo hints = {
@@ -650,7 +827,7 @@ static int resolve_broker_addr(struct sockaddr_storage* addr)
         .ai_socktype = SOCK_STREAM,
     };
 
-    int ret = zsock_getaddrinfo(g_mqtt.broker_addr, NULL, &hints, &res);
+    int ret = zsock_getaddrinfo(broker_addr, NULL, &hints, &res);
     if (ret != 0) {
         LOG_ERR("getaddrinfo 失败: %d", ret);
         return ret;
@@ -660,10 +837,10 @@ static int resolve_broker_addr(struct sockaddr_storage* addr)
 
     if (addr->ss_family == AF_INET) {
         struct sockaddr_in* sin = (struct sockaddr_in*)addr;
-        sin->sin_port = htons(g_mqtt.broker_port);
+        sin->sin_port = htons(broker_port);
     } else if (addr->ss_family == AF_INET6) {
         struct sockaddr_in6* sin6 = (struct sockaddr_in6*)addr;
-        sin6->sin6_port = htons(g_mqtt.broker_port);
+        sin6->sin6_port = htons(broker_port);
     }
 
     zsock_freeaddrinfo(res);

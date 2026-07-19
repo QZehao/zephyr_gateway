@@ -31,6 +31,9 @@ LOG_MODULE_REGISTER(data_simulator, CONFIG_SYS_LOG_LEVEL);
 
 #define SIM_THREAD_PRIORITY   GATEWAY_THREAD_PRIORITY_DEFAULT
 #define SIM_THREAD_STACK_SIZE GATEWAY_THREAD_STACK_SIZE_DEFAULT
+/* 数值量级上限：基线/范围/注入值超过此量级视为非法输入，拒绝写入，
+ * 防止污染 data_bus 下游（如 anomaly_detection 滑动窗口统计） */
+#define SIM_VALUE_ABS_LIMIT   1e6f
 
 /* =============================================================================
  * 内部数据结构
@@ -149,8 +152,13 @@ int data_simulator_stop(void)
 
     g_sim.status = MODULE_STATUS_STOPPED;
 
-    /* 等待线程实际退出，避免旧线程与新启动的线程并发 */
-    k_thread_join(&g_sim.thread, K_MSEC(500));
+    /* 等待线程实际退出，避免旧线程与新启动的线程复用同一 k_thread 控制块并发运行。
+     * 线程主循环每轮仅 k_msleep(10) 后重新检查 status（见 data_sim_thread_func），
+     * 故此处最坏等待时间有界，约为一个采样步进（<=10ms）。与其余模块
+     * （network_manager.c/protocol_can.c/protocol_mqtt.c/protocol_modbus.c）保持
+     * 一致，统一使用 K_FOREVER，不再使用带超时的 join（超时不检查会导致线程控制块
+     * 被误判为已退出而复用，引发未定义行为） */
+    k_thread_join(&g_sim.thread, K_FOREVER);
 
     LOG_INF("数据模拟模块已停止");
     return 0;
@@ -183,7 +191,8 @@ int data_simulator_control(int cmd, void* arg)
     switch (cmd) {
     case SIM_CMD_SET_BASELINE: {
         sim_channel_config_t* ch = (sim_channel_config_t*)arg;
-        if (ch == NULL || ch->channel_id >= SENSOR_TYPE_COUNT) {
+        if (ch == NULL || ch->channel_id >= SENSOR_TYPE_COUNT ||
+            !isfinite(ch->baseline) || fabsf(ch->baseline) > SIM_VALUE_ABS_LIMIT) {
             return -EINVAL;
         }
         g_sim.channels[ch->channel_id].baseline = ch->baseline;
@@ -192,7 +201,8 @@ int data_simulator_control(int cmd, void* arg)
     }
     case SIM_CMD_SET_RANGE: {
         sim_channel_config_t* ch = (sim_channel_config_t*)arg;
-        if (ch == NULL || ch->channel_id >= SENSOR_TYPE_COUNT || ch->range < 0.0f) {
+        if (ch == NULL || ch->channel_id >= SENSOR_TYPE_COUNT || ch->range < 0.0f ||
+            !isfinite(ch->range) || ch->range > SIM_VALUE_ABS_LIMIT) {
             return -EINVAL;
         }
         g_sim.channels[ch->channel_id].range = ch->range;
@@ -223,7 +233,8 @@ int data_simulator_control(int cmd, void* arg)
     }
     case SIM_CMD_INJECT: {
         sim_inject_param_t* param = (sim_inject_param_t*)arg;
-        if (param == NULL || param->sensor_type >= SENSOR_TYPE_COUNT) {
+        if (param == NULL || param->sensor_type >= SENSOR_TYPE_COUNT ||
+            !isfinite(param->value) || fabsf(param->value) > SIM_VALUE_ABS_LIMIT) {
             return -EINVAL;
         }
         publish_sensor_data(param->sensor_type, param->value);
@@ -451,8 +462,8 @@ static int cmd_sim_config(const struct shell* sh, size_t argc, char** argv)
 
     char* endptr;
     float value = strtof(argv[3], &endptr);
-    if (endptr == argv[3]) {
-        shell_print(sh, "无效数值");
+    if (endptr == argv[3] || !isfinite(value) || fabsf(value) > SIM_VALUE_ABS_LIMIT) {
+        shell_print(sh, "无效数值（需为有限数，且 |value| <= %.0f）", (double)SIM_VALUE_ABS_LIMIT);
         return -1;
     }
 
@@ -460,24 +471,33 @@ static int cmd_sim_config(const struct shell* sh, size_t argc, char** argv)
         .channel_id = (uint8_t)type,
     };
 
+    int ret;
     if (strcmp(argv[2], "baseline") == 0) {
         ch.baseline = value;
-        data_simulator_control(SIM_CMD_SET_BASELINE, &ch);
-        shell_print(sh, "传感器 %u 基线设为 %.2f", (unsigned)type, (double)value);
+        ret = data_simulator_control(SIM_CMD_SET_BASELINE, &ch);
+        if (ret == 0) {
+            shell_print(sh, "传感器 %u 基线设为 %.2f", (unsigned)type, (double)value);
+        } else {
+            shell_print(sh, "设置失败: %d", ret);
+        }
     } else if (strcmp(argv[2], "range") == 0) {
         if (value < 0.0f) {
             shell_print(sh, "range 必须 >= 0");
             return -1;
         }
         ch.range = value;
-        data_simulator_control(SIM_CMD_SET_RANGE, &ch);
-        shell_print(sh, "传感器 %u 范围设为 %.2f", (unsigned)type, (double)value);
+        ret = data_simulator_control(SIM_CMD_SET_RANGE, &ch);
+        if (ret == 0) {
+            shell_print(sh, "传感器 %u 范围设为 %.2f", (unsigned)type, (double)value);
+        } else {
+            shell_print(sh, "设置失败: %d", ret);
+        }
     } else {
         shell_print(sh, "未知配置项: %s (可用: baseline, range)", argv[2]);
         return -1;
     }
 
-    return 0;
+    return ret;
 }
 
 static int cmd_sim_inject(const struct shell* sh, size_t argc, char** argv)
@@ -497,8 +517,8 @@ static int cmd_sim_inject(const struct shell* sh, size_t argc, char** argv)
 
     char* endptr;
     float value = strtof(argv[2], &endptr);
-    if (endptr == argv[2]) {
-        shell_print(sh, "无效数值");
+    if (endptr == argv[2] || !isfinite(value) || fabsf(value) > SIM_VALUE_ABS_LIMIT) {
+        shell_print(sh, "无效数值（需为有限数，且 |value| <= %.0f）", (double)SIM_VALUE_ABS_LIMIT);
         return -1;
     }
 

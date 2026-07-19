@@ -126,9 +126,11 @@ extern "C" {
 
 #define GATEWAY_ANOMALY_WINDOW_SIZE       CONFIG_GATEWAY_ANOMALY_WINDOW_SIZE
 #define GATEWAY_ANOMALY_MAX_SENSOR_TYPES  5
-#define GATEWAY_ANOMALY_WARNING_SIGMA     CONFIG_GATEWAY_ANOMALY_WARNING_SIGMA
-#define GATEWAY_ANOMALY_CRITICAL_SIGMA    CONFIG_GATEWAY_ANOMALY_CRITICAL_SIGMA
-#define GATEWAY_ANOMALY_EMERGENCY_SIGMA   CONFIG_GATEWAY_ANOMALY_EMERGENCY_SIGMA
+/* 注：sigma 阈值不在此处二次包装。anomaly_detection.c 直接使用
+ * CONFIG_GATEWAY_ANOMALY_{WARNING,CRITICAL,EMERGENCY}_SIGMA（定点存储，
+ * 实际值 = Kconfig 值 / 10.0f），换算逻辑见 anomaly_detection.c:124-126 附近。
+ * 曾存在的 GATEWAY_ANOMALY_WARNING/CRITICAL/EMERGENCY_SIGMA 包装宏未被任何代码
+ * 引用，且语义上容易被误当作已换算后的 float 阈值直接使用，故已移除。 */
 
 /* =============================================================================
  * 离线缓存配置

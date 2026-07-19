@@ -71,8 +71,12 @@ static int cloud_aliyun_publish(cloud_msg_type_t type, const char* json_payload)
     (void)type;
 
     char topic[128];
-    snprintf(topic, sizeof(topic), ALIYUN_TOPIC_PROPERTY_POST,
-             ALIYUN_PRODUCT_KEY, ALIYUN_DEVICE_NAME);
+    int  topic_len = snprintf(topic, sizeof(topic), ALIYUN_TOPIC_PROPERTY_POST,
+                               ALIYUN_PRODUCT_KEY, ALIYUN_DEVICE_NAME);
+    if (topic_len <= 0 || (size_t)topic_len >= sizeof(topic)) {
+        LOG_ERR("阿里云 Topic 拼装失败或被截断 (len=%d)", topic_len);
+        return -ENOMEM;
+    }
 
     char payload[256];
     int len = aliyun_build_property_json(json_payload, payload, sizeof(payload));
@@ -137,27 +141,43 @@ const cloud_provider_t* cloud_aliyun_get_provider(void)
  *   - broker   = ${productKey}.iot-as-mqtt.${region}.aliyuncs.com:1883
  *
  * 若 HMAC 不可用（CONFIG_MBEDTLS 未启用），回退到 DeviceSecret 占位密码并 LOG_WRN。
+ *
+ * @return 0 成功；snprintf 拼装被截断/失败返回 -ENOMEM；下发 MQTT 层参数失败
+ *         返回 protocol_mqtt_set_* 对应的负错误码。
  */
-static void aliyun_setup_auth(void)
+static int aliyun_setup_auth(void)
 {
     /* rawClientId：用于签名的原始 client id（不带后缀），Broker 端校验签名时用此值 */
     const char* raw_client_id = CONFIG_GATEWAY_MQTT_CLIENT_ID;
+    int len;
 
     /* 构造 MQTT clientId（含鉴权参数后缀） */
     char client_id_full[192];
-    snprintf(client_id_full, sizeof(client_id_full),
-             "%s|securemode=3,signmethod=hmacsha1|", raw_client_id);
+    len = snprintf(client_id_full, sizeof(client_id_full),
+                    "%s|securemode=3,signmethod=hmacsha1|", raw_client_id);
+    if (len <= 0 || (size_t)len >= sizeof(client_id_full)) {
+        LOG_ERR("阿里云 clientId 拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
+    }
 
     /* username = deviceName&productKey */
     char username[96];
-    snprintf(username, sizeof(username), "%s&%s",
-             ALIYUN_DEVICE_NAME, ALIYUN_PRODUCT_KEY);
+    len = snprintf(username, sizeof(username), "%s&%s",
+                    ALIYUN_DEVICE_NAME, ALIYUN_PRODUCT_KEY);
+    if (len <= 0 || (size_t)len >= sizeof(username)) {
+        LOG_ERR("阿里云 username 拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
+    }
 
     /* 构造签名内容（按字典序：clientId/deviceName/productKey） */
     char content[256];
-    snprintf(content, sizeof(content),
-             "clientId%sdeviceName%sproductKey%s",
-             raw_client_id, ALIYUN_DEVICE_NAME, ALIYUN_PRODUCT_KEY);
+    len = snprintf(content, sizeof(content),
+                    "clientId%sdeviceName%sproductKey%s",
+                    raw_client_id, ALIYUN_DEVICE_NAME, ALIYUN_PRODUCT_KEY);
+    if (len <= 0 || (size_t)len >= sizeof(content)) {
+        LOG_ERR("阿里云签名内容拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
+    }
 
     /* HMAC-SHA1 签名，输出 40 字符小写 hex */
     char password[64] = {0};
@@ -175,16 +195,33 @@ static void aliyun_setup_auth(void)
 
     /* 构造阿里云 broker 地址 */
     char broker[128];
-    snprintf(broker, sizeof(broker),
-             "%s.iot-as-mqtt.%s.aliyuncs.com", ALIYUN_PRODUCT_KEY, ALIYUN_REGION);
+    len = snprintf(broker, sizeof(broker),
+                    "%s.iot-as-mqtt.%s.aliyuncs.com", ALIYUN_PRODUCT_KEY, ALIYUN_REGION);
+    if (len <= 0 || (size_t)len >= sizeof(broker)) {
+        LOG_ERR("阿里云 broker 地址拼装失败或被截断 (len=%d)", len);
+        return -ENOMEM;
+    }
 
-    /* 下发到 MQTT 层 */
-    protocol_mqtt_set_client_id(client_id_full);
-    protocol_mqtt_set_auth(username, password);
-    protocol_mqtt_set_broker(broker, 1883);
+    /* 下发到 MQTT 层，逐一检查返回值 */
+    ret = protocol_mqtt_set_client_id(client_id_full);
+    if (ret != 0) {
+        LOG_ERR("设置 MQTT clientId 失败: %d", ret);
+        return ret;
+    }
+    ret = protocol_mqtt_set_auth(username, password);
+    if (ret != 0) {
+        LOG_ERR("设置 MQTT 认证失败: %d", ret);
+        return ret;
+    }
+    ret = protocol_mqtt_set_broker(broker, 1883);
+    if (ret != 0) {
+        LOG_ERR("设置 MQTT broker 失败: %d", ret);
+        return ret;
+    }
 
     LOG_INF("阿里云 MQTT 参数: clientId=%s user=%s broker=%s",
             client_id_full, username, broker);
+    return 0;
 }
 
 /* =============================================================================
@@ -195,14 +232,24 @@ static int cloud_aliyun_init(void* config)
 {
     ARG_UNUSED(config);
     LOG_INF("初始化阿里云 Provider...");
-    cloud_provider_register(cloud_aliyun_get_provider());
+
+    int ret = cloud_provider_register(cloud_aliyun_get_provider());
+    if (ret != 0) {
+        LOG_ERR("阿里云 Provider 注册失败: %d", ret);
+        return ret;
+    }
+
     LOG_INF("阿里云 Provider 初始化完成");
     return 0;
 }
 
 static int cloud_aliyun_start(void)
 {
-    aliyun_setup_auth();
+    int ret = aliyun_setup_auth();
+    if (ret != 0) {
+        LOG_ERR("阿里云 Provider 启动失败: %d", ret);
+        return ret;
+    }
     LOG_INF("阿里云 Provider 已启动");
     return 0;
 }

@@ -42,17 +42,30 @@ bool protocol_mqtt_is_connected(void);
 /** 发布 MQTT 消息（云上传模块调用） */
 int protocol_mqtt_publish(const char* topic, const char* payload, uint16_t payload_len);
 
-/** 设置 MQTT 认证参数（username/password；传 NULL 清除认证，触发重连） */
+/**
+ * @brief 设置 MQTT 认证参数（username/password；触发重连）
+ *
+ * @param username 用户名字符串（NULL 表示与 password 一起清除认证）；容量契约见
+ *                 protocol_mqtt.c 中 mqtt_username[192] / mqtt_password[128]
+ * @param password 密码字符串
+ * @return 0 成功；-EINVAL 参数超出缓冲容量（不再静默截断）
+ */
 int protocol_mqtt_set_auth(const char* username, const char* password);
 
-/** 设置 MQTT Broker 地址和端口（触发重连） */
+/**
+ * @brief 设置 MQTT Broker 地址和端口（触发重连）
+ *
+ * @param addr broker 地址字符串，长度需小于 BROKER_ADDR_MAX_LEN(64)
+ * @param port broker 端口
+ * @return 0 成功；-EINVAL 参数无效或地址超出缓冲容量（不再静默截断）
+ */
 int protocol_mqtt_set_broker(const char* addr, uint16_t port);
 
 /**
  * @brief 设置 MQTT clientId（运行时下发，触发重连）
  *
- * @param id 新的 clientId 字符串（不能为空）
- * @return 0 成功；-EINVAL 参数无效
+ * @param id 新的 clientId 字符串（不能为空，长度需小于 192）
+ * @return 0 成功；-EINVAL 参数无效或超出缓冲容量（不再静默截断）
  *
  * @note 持 client_mutex 写入，置 pending_disconnect 触发重连。
  *       由云 provider（阿里云/腾讯/AWS）在 setup_auth 时调用。

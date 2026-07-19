@@ -30,6 +30,14 @@ static struct k_mutex          g_provider_lock;
  * API 实现
  * ============================================================================= */
 
+/**
+ * @brief 初始化 Provider 注册表
+ *
+ * 清空已注册计数并初始化内部互斥锁。通过 SYS_INIT 在 POST_KERNEL 阶段自动调用，
+ * 优先级早于各 cloud_xxx Provider 的自动注册（GATEWAY_INIT_PRIO_CLOUD_PROVIDER）。
+ *
+ * @return 恒为 0
+ */
 int cloud_provider_init(void)
 {
     g_provider_count = 0;
@@ -37,6 +45,15 @@ int cloud_provider_init(void)
     return 0;
 }
 
+/**
+ * @brief 注册一个云平台 Provider
+ *
+ * 按 name 去重（幂等：重复注册同名 Provider 直接返回成功），注册表容量固定为
+ * MAX_CLOUD_PROVIDERS，满员时返回 -ENOMEM。
+ *
+ * @param provider 待注册的 Provider 描述符，name/publish 不可为 NULL
+ * @return 0 成功（含幂等命中）；-EINVAL 参数非法；-ENOMEM 注册表已满
+ */
 int cloud_provider_register(const cloud_provider_t* provider)
 {
     if (provider == NULL || provider->name == NULL || provider->publish == NULL) {
@@ -67,6 +84,19 @@ int cloud_provider_register(const cloud_provider_t* provider)
     return 0;
 }
 
+/**
+ * @brief 向所有已注册的 Provider 广播发布一条消息
+ *
+ * 持锁遍历注册表逐个调用 publish()，单个 Provider 失败不影响其余 Provider 的
+ * 发布尝试。调用者可通过 out_success_count/out_fail_count 判断是否需要转入
+ * 离线缓存（例如 success_count==0 时，无论是否有 Provider 均视为失败）。
+ *
+ * @param type              消息类型（遥测/异常）
+ * @param json_payload      JSON 载荷字符串
+ * @param[out] out_success_count 成功发布的 Provider 数量（可传 NULL）
+ * @param[out] out_fail_count    失败的 Provider 数量（可传 NULL）
+ * @return 0 全部成功；-EIO 至少一个 Provider 失败；-EINVAL json_payload 为 NULL
+ */
 int cloud_provider_publish_all(cloud_msg_type_t type, const char* json_payload,
                                 uint8_t* out_success_count, uint8_t* out_fail_count)
 {
@@ -104,11 +134,20 @@ int cloud_provider_publish_all(cloud_msg_type_t type, const char* json_payload,
     return (fail > 0) ? -EIO : 0;
 }
 
+/**
+ * @brief 获取当前已注册的 Provider 数量
+ * @return 已注册数量，范围 [0, MAX_CLOUD_PROVIDERS]
+ */
 uint8_t cloud_provider_get_count(void)
 {
     return g_provider_count;
 }
 
+/**
+ * @brief 按名称查找已注册 Provider
+ * @param name Provider 名称（如 "private"/"aliyun"/"tencent"/"aws"）
+ * @return 匹配的 Provider 指针；未找到或 name 为 NULL 返回 NULL
+ */
 const cloud_provider_t* cloud_provider_get_by_name(const char* name)
 {
     if (name == NULL) {
@@ -124,6 +163,11 @@ const cloud_provider_t* cloud_provider_get_by_name(const char* name)
     return NULL;
 }
 
+/**
+ * @brief 按索引获取已注册 Provider
+ * @param idx 索引，取值范围 [0, cloud_provider_get_count()-1]
+ * @return 对应 Provider 指针；越界返回 NULL
+ */
 const cloud_provider_t* cloud_provider_get_by_index(uint8_t idx)
 {
     if (idx >= g_provider_count) {
@@ -132,6 +176,12 @@ const cloud_provider_t* cloud_provider_get_by_index(uint8_t idx)
     return g_providers[idx];
 }
 
+/**
+ * @brief 获取 Provider 连接状态的可读字符串
+ * @param provider 目标 Provider
+ * @return "connected"/"disconnected"（据 is_connected() 结果）；
+ *         provider 为 NULL 返回 "invalid"；未实现 is_connected 返回 "unknown"
+ */
 const char* cloud_provider_status_str(const cloud_provider_t* provider)
 {
     if (provider == NULL) {
