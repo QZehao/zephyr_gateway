@@ -31,3 +31,22 @@
 		rs485-uart = &uart1;
 	};
 };
+
+/*
+ * settings NVS 后端（app_kv 持久化：Wi-Fi 凭据等）与 offline_cache 的分区隔离。
+ *
+ * 背景：Zephyr settings_nvs 后端在无 zephyr,settings-partition chosen 时回退到
+ * storage_partition（见 zephyr/subsys/settings/src/settings_nvs.c），而
+ * src/gateway/offline_cache.c 也在同一 storage_partition 上独立 nvs_mount 了
+ * 自己的 nvs_fs——两个 NVS 实例共用同一块 flash 区域会互相把对方的数据当垃圾
+ * 回收，表现为 Wi-Fi 凭据（app_kv → settings）重启后丢失。
+ *
+ * 本工程不用 MCUboot swap-with-scratch，image-scratch 分区（0x3e0000, 124KB）
+ * 空闲且容量足够（settings 需 8 sectors × 4KB = 32KB），故指定给 settings 专用；
+ * storage_partition（0x3b0000, 192KB）保持由 offline_cache 独占，已有缓存数据不受影响。
+ */
+/ {
+	chosen {
+		zephyr,settings-partition = &scratch_partition;
+	};
+};

@@ -748,6 +748,13 @@ static void mqtt_evt_handler(struct mqtt_client* client, const struct mqtt_evt* 
         struct mqtt_subscription_list sub_list = {
             .list = &topic,
             .list_count = 1,
+            /* SUBSCRIBE 报文的 packet id 必须非零（MQTT 3.1.1 §2.3.1），
+             * Zephyr subscribe_encode() 对 message_id==0 直接返回 -EINVAL
+             * （subsys/net/lib/mqtt/mqtt_encoder.c）。此前未赋值导致订阅永远失败，
+             * 连接在 CONNACK 后立即被 pending_disconnect 断开，表现为约 1Hz 的
+             * 连接-断开循环：broker 只见 CONNACK 与 DISCONNECT，从不见 SUBSCRIBE，
+             * 上行 publish 只能在短暂的 CONNECTED 窗口内偶发成功。 */
+            .message_id = (uint16_t)(k_uptime_get_32() & 0xFFFF) | 1U,
         };
         ret = mqtt_subscribe(client, &sub_list);
         if (ret != 0) {
