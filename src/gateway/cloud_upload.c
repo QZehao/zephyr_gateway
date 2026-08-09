@@ -68,6 +68,8 @@ typedef struct
     /* 统计 */
     uint32_t success_count;
     uint32_t fail_count;
+    /* 已转存离线缓存、尚未重播的滞留条数估计值：转存时 ++，重播出缓存时 --。
+     * 仅 RAM 统计，重启归零，而 NVS 缓存可跨重启存活，故为重播侧做了下溢保护 */
     uint32_t cached_count;
     /* 定时器 */
     uint32_t last_upload_ms;
@@ -255,6 +257,11 @@ void cloud_upload_on_event(const event_t *event, void *user_data)
                 (void)cloud_provider_publish_all(msg_type, cd->json_payload, &ok, &fail);
 
                 k_mutex_lock(&g_cloud.lock, K_FOREVER);
+                /* 条目在 offline_cache 发布 REPLAY 成功时已 commit 出缓存，无论本次
+                 * 直发成功还是丢弃都不再滞留，递减 cached_count；下溢保护见字段注释 */
+                if (g_cloud.cached_count > 0) {
+                    g_cloud.cached_count--;
+                }
                 if (ok > 0) {
                     g_cloud.success_count++;
                     LOG_DBG("离线回放上传成功: %s", cd->json_payload);
@@ -398,10 +405,14 @@ static void cloud_handle_offline_unlocked(uint8_t data_type, const char *json)
     strncpy(cache_data.json_payload, json, sizeof(cache_data.json_payload) - 1);
     cache_data.json_payload[sizeof(cache_data.json_payload) - 1] = '\0';
 
-    event_publish_copy(EVENT_TYPE_CLOUD_UPLOAD, EVENT_PRIORITY_NORMAL,
-                       &cache_data, sizeof(cache_data));
-    g_cloud.cached_count++;
-    LOG_INF("数据已转存离线缓存");
+    /* 仅发布成功（事件真正交给 offline_cache）才计入滞留条数，避免与 cache 实际不符 */
+    if (event_publish_copy(EVENT_TYPE_CLOUD_UPLOAD, EVENT_PRIORITY_NORMAL,
+                           &cache_data, sizeof(cache_data)) == EVENT_OK) {
+        g_cloud.cached_count++;
+        LOG_INF("数据已转存离线缓存");
+    } else {
+        LOG_WRN("离线缓存事件发布失败，本条数据丢弃");
+    }
 }
 
 /**
