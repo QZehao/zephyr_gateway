@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "断网续传交互时序 — offline_cache",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [1000, 740]
+  },
+  "participants": [
+    { "id": "cloud_upload", "type": "backend", "label": "cloud_upload", "sublabel": "上传业务" },
+    { "id": "event_system", "type": "messagebus", "label": "event_system", "sublabel": "事件总线" },
+    { "id": "offline_cache", "type": "backend", "label": "offline_cache", "sublabel": "断网续传" },
+    { "id": "nvs", "type": "database", "label": "NVS", "sublabel": "storage_partition" },
+    { "id": "protocol_mqtt", "type": "backend", "label": "protocol_mqtt", "sublabel": "MQTT 连接" }
+  ],
+  "segments": [
+    { "from": 150, "to": 375, "label": "断网转存" },
+    { "from": 395, "to": 665, "label": "网络恢复批量重播" }
+  ],
+  "messages": [
+    { "id": "m1", "from": "cloud_upload", "to": "protocol_mqtt", "y": 185, "label": "publish_all() 分发 JSON" },
+    { "id": "m2", "from": "protocol_mqtt", "to": "cloud_upload", "y": 225, "label": "success_count == 0", "variant": "return" },
+    { "id": "m3", "from": "cloud_upload", "to": "event_system", "y": 267, "label": "EVENT_TYPE_CLOUD_UPLOAD（缓存语义）", "variant": "emphasis" },
+    { "id": "m4", "from": "event_system", "to": "offline_cache", "y": 303, "label": "转存请求" },
+    { "id": "m5", "from": "offline_cache", "to": "nvs", "y": 345, "label": "nvs_write 环形写入 · 满则覆盖最旧" },
+    { "id": "m6", "from": "protocol_mqtt", "to": "event_system", "y": 407, "label": "EVENT_TYPE_CLOUD_CONNECTED", "variant": "emphasis" },
+    { "id": "m7", "from": "event_system", "to": "offline_cache", "y": 443, "label": "网络恢复边沿" },
+    { "id": "m8", "from": "offline_cache", "to": "nvs", "y": 485, "label": "peek 最旧条目（不推进指针）" },
+    { "id": "m9", "from": "offline_cache", "to": "event_system", "y": 527, "label": "EVENT_TYPE_CLOUD_REPLAY（回放语义）", "variant": "emphasis" },
+    { "id": "m10", "from": "event_system", "to": "cloud_upload", "y": 563, "label": "直发请求（仅 cloud_upload 订阅）" },
+    { "id": "m11", "from": "cloud_upload", "to": "protocol_mqtt", "y": 605, "label": "publish_all() 同步直发 · 绕过节流与队列", "variant": "emphasis" },
+    { "id": "m12", "from": "protocol_mqtt", "to": "cloud_upload", "y": 645, "label": "发送结果", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "cloud_upload", "from": 180, "to": 235, "type": "backend" },
+    { "participant": "protocol_mqtt", "from": 185, "to": 230, "type": "backend" },
+    { "participant": "event_system", "from": 262, "to": 313, "type": "messagebus" },
+    { "participant": "offline_cache", "from": 297, "to": 355, "type": "backend" },
+    { "participant": "nvs", "from": 340, "to": 355, "type": "database" },
+    { "participant": "protocol_mqtt", "from": 402, "to": 412, "type": "backend" },
+    { "participant": "event_system", "from": 402, "to": 453, "type": "messagebus" },
+    { "participant": "offline_cache", "from": 437, "to": 537, "type": "backend" },
+    { "participant": "nvs", "from": 480, "to": 495, "type": "database" },
+    { "participant": "event_system", "from": 522, "to": 573, "type": "messagebus" },
+    { "participant": "cloud_upload", "from": 555, "to": 650, "type": "backend" },
+    { "participant": "protocol_mqtt", "from": 600, "to": 650, "type": "backend" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "事件语义分流", "items": ["CLOUD_UPLOAD 为缓存语义，仅 offline_cache 订阅", "CLOUD_REPLAY 为回放语义，仅 cloud_upload 订阅直发", "独立类型杜绝缓存回环与断网期无效重试"] },
+    { "dot": "orange", "title": "可靠性设计", "items": ["peek/commit 两段式：REPLAY 发布失败时下轮重试同一条目", "环形队列写满覆盖最旧，条数上限由 Kconfig 约束", "head/tail/count/CRC 持久化，缓存可跨重启存活"] },
+    { "dot": "rose", "title": "丢弃边界", "items": ["REPLAY 事件发布成功即 commit 出缓存", "直发失败或无 Provider 时本条丢弃并记录告警", "cached_count 为 RAM 估计值，重启归零并带下溢保护"] }
+  ]
+}

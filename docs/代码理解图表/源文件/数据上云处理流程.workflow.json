@@ -1,0 +1,216 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "数据上云处理流程 — cloud_upload",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "bus",
+      "label": "采集 / 数据总线"
+    },
+    {
+      "id": "upload",
+      "label": "cloud_upload 上传业务"
+    },
+    {
+      "id": "providers",
+      "label": "云 Provider 层"
+    },
+    {
+      "id": "offline",
+      "label": "断网续传",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "collect",
+      "label": "采集",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "process",
+      "label": "上传业务",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "dispatch",
+      "label": "分发上云",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "sensor_sample",
+    "data_bus_ch",
+    "enqueue",
+    "worker",
+    "publish_all",
+    "providers"
+  ],
+  "nodes": [
+    {
+      "id": "sensor_sample",
+      "lane": "bus",
+      "col": 0,
+      "type": "backend",
+      "label": "传感器采样",
+      "sublabel": "simulator / CAN / Modbus",
+      "width": 128
+    },
+    {
+      "id": "data_bus_ch",
+      "lane": "bus",
+      "col": 1,
+      "type": "messagebus",
+      "label": "data_bus 通道 sensor",
+      "sublabel": "gateway_sensor_publish()",
+      "width": 150
+    },
+    {
+      "id": "anomaly_evt",
+      "lane": "bus",
+      "col": 1,
+      "type": "backend",
+      "label": "异常分级事件",
+      "sublabel": "EVENT_TYPE_ANOMALY_*",
+      "yOffset": 88
+    },
+    {
+      "id": "enqueue",
+      "lane": "upload",
+      "col": 2,
+      "type": "backend",
+      "label": "回调拷贝入队",
+      "sublabel": "k_msgq · K_NO_WAIT"
+    },
+    {
+      "id": "worker",
+      "lane": "upload",
+      "col": 3,
+      "type": "backend",
+      "label": "专用上传线程",
+      "sublabel": "JSON 序列化"
+    },
+    {
+      "id": "publish_all",
+      "lane": "providers",
+      "col": 4,
+      "type": "backend",
+      "label": "publish_all",
+      "sublabel": "cloud_provider 多播"
+    },
+    {
+      "id": "providers",
+      "lane": "providers",
+      "col": 5,
+      "type": "cloud",
+      "label": "已注册 Provider",
+      "sublabel": "private / aliyun / tencent / aws",
+      "width": 160
+    },
+    {
+      "id": "offline_cache",
+      "lane": "offline",
+      "col": 3,
+      "type": "database",
+      "label": "offline_cache",
+      "sublabel": "NVS 环形队列"
+    }
+  ],
+  "edges": [
+    {
+      "from": "sensor_sample",
+      "to": "data_bus_ch",
+      "label": "采样发布"
+    },
+    {
+      "from": "data_bus_ch",
+      "to": "enqueue",
+      "label": "间隔节流后入队",
+      "variant": "emphasis"
+    },
+    {
+      "from": "anomaly_evt",
+      "to": "enqueue",
+      "label": "直入队 · 不限流",
+      "role": "async"
+    },
+    {
+      "from": "enqueue",
+      "to": "worker",
+      "label": "取出条目"
+    },
+    {
+      "from": "worker",
+      "to": "publish_all",
+      "label": "JSON 载荷"
+    },
+    {
+      "from": "publish_all",
+      "to": "providers",
+      "label": "publish()",
+      "variant": "emphasis"
+    },
+    {
+      "from": "enqueue",
+      "to": "offline_cache",
+      "label": "队满转存 CLOUD_UPLOAD",
+      "role": "error",
+      "variant": "dashed",
+      "route": "drop"
+    },
+    {
+      "from": "publish_all",
+      "to": "offline_cache",
+      "label": "全部失败转存",
+      "role": "error",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "right"
+    },
+    {
+      "from": "offline_cache",
+      "to": "publish_all",
+      "label": "CLOUD_REPLAY 直发（绕过队列）",
+      "role": "return",
+      "route": "up-channel"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "上传主链路",
+      "items": [
+        "回调只拷贝入队，不阻塞 data_bus / 事件分发线程",
+        "JSON 序列化与 publish_all 在专用上传线程完成",
+        "遥测按 upload_interval_ms 节流，异常与回放不受限"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "失败判定与转存",
+      "items": [
+        "success_count == 0 即视为失败（含零 Provider）",
+        "区分「全部 Provider 失败」与「无 Provider 已注册」",
+        "失败数据统一发布 EVENT_TYPE_CLOUD_UPLOAD 转存 NVS"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "队列与回放",
+      "items": [
+        "上传队列深度 4，满则退化为离线缓存直存",
+        "回放以 CLOUD_REPLAY 语义同步直发，不占用上传队列",
+        "回放条目出缓存后不再回写，失败仅记录告警"
+      ]
+    }
+  ]
+}

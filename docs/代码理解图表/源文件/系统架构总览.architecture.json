@@ -1,0 +1,424 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Zephyr 工业边缘网关 — 系统架构总览",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "main-pipeline",
+        "label": "采集到上云主链路",
+        "focus": [
+          "data_simulator",
+          "protocol_can",
+          "protocol_modbus",
+          "data_bus",
+          "cloud_upload",
+          "cloud_provider",
+          "cloud_aliyun",
+          "protocol_mqtt"
+        ],
+        "note": "传感器数据经 data_bus 到 cloud_upload，再由 Provider 多播分发到 MQTT 通道。"
+      },
+      {
+        "id": "anomaly-bypass",
+        "label": "异常检测旁路",
+        "focus": [
+          "data_bus",
+          "anomaly_detection",
+          "cloud_upload"
+        ],
+        "note": "滑动窗口基线偏离时发布分级异常事件，由 cloud_upload 实时上报。"
+      },
+      {
+        "id": "offline-loop",
+        "label": "断网续传回路",
+        "focus": [
+          "cloud_upload",
+          "offline_cache",
+          "protocol_mqtt",
+          "network_manager"
+        ],
+        "note": "全部 Provider 失败转存 NVS，网络恢复后以回放语义重发。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "data_simulator",
+      "type": "backend",
+      "label": "数据模拟采集",
+      "sublabel": "演示数据源",
+      "pos": [
+        40,
+        160
+      ],
+      "size": [
+        132,
+        60
+      ],
+      "tag": "SYS_INIT 69"
+    },
+    {
+      "id": "protocol_can",
+      "type": "backend",
+      "label": "CAN 总线采集",
+      "sublabel": "ISR + ring buffer",
+      "pos": [
+        40,
+        310
+      ],
+      "size": [
+        132,
+        60
+      ],
+      "tag": "SYS_INIT 70"
+    },
+    {
+      "id": "protocol_modbus",
+      "type": "backend",
+      "label": "Modbus RTU 主站",
+      "sublabel": "UART/485 轮询",
+      "pos": [
+        40,
+        460
+      ],
+      "size": [
+        132,
+        60
+      ],
+      "tag": "SYS_INIT 71"
+    },
+    {
+      "id": "data_bus",
+      "type": "messagebus",
+      "label": "data_bus 通道 sensor",
+      "sublabel": "零拷贝多消费者扇出",
+      "pos": [
+        280,
+        318
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "高频数据"
+    },
+    {
+      "id": "anomaly_detection",
+      "type": "backend",
+      "label": "异常检测",
+      "sublabel": "滑动窗口 μ/σ 自适应阈值",
+      "pos": [
+        520,
+        150
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "cloud_upload",
+      "type": "backend",
+      "label": "数据上云",
+      "sublabel": "JSON 格式化 + 速率控制",
+      "pos": [
+        520,
+        318
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "cloud_provider",
+      "type": "backend",
+      "label": "Provider 注册表",
+      "sublabel": "publish_all 多播分发",
+      "pos": [
+        760,
+        318
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "cloud_private",
+      "type": "cloud",
+      "label": "私有 MQTT Broker",
+      "sublabel": "用户名/密码",
+      "pos": [
+        980,
+        130
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "cloud_aliyun",
+      "type": "cloud",
+      "label": "阿里云 IoT",
+      "sublabel": "一机一密 HMAC-SHA1",
+      "pos": [
+        980,
+        240
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "cloud_tencent",
+      "type": "cloud",
+      "label": "腾讯云 IoT Hub",
+      "sublabel": "密钥 HMAC-SHA256",
+      "pos": [
+        980,
+        350
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "cloud_aws",
+      "type": "cloud",
+      "label": "AWS IoT Core",
+      "sublabel": "X.509 mTLS（占位）",
+      "pos": [
+        980,
+        460
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "protocol_mqtt",
+      "type": "backend",
+      "label": "MQTT 连接管理",
+      "sublabel": "状态机 + 指数退避重连",
+      "pos": [
+        1180,
+        318
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "network_manager",
+      "type": "backend",
+      "label": "网络链路管理",
+      "sublabel": "发布 NET_UP/NET_DOWN",
+      "pos": [
+        1180,
+        180
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "offline_cache",
+      "type": "database",
+      "label": "离线缓存",
+      "sublabel": "NVS 环形队列 · 断网续传",
+      "pos": [
+        520,
+        580
+      ],
+      "size": [
+        150,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "采集层",
+      "wraps": [
+        "data_simulator",
+        "protocol_can",
+        "protocol_modbus"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "region",
+      "label": "数据与业务层",
+      "wraps": [
+        "data_bus",
+        "anomaly_detection",
+        "cloud_upload"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "region",
+      "label": "云平台 Provider 层",
+      "wraps": [
+        "cloud_provider",
+        "cloud_private",
+        "cloud_aliyun",
+        "cloud_tencent",
+        "cloud_aws"
+      ],
+      "pad": 16
+    }
+  ],
+  "connections": [
+    {
+      "from": "data_simulator",
+      "to": "data_bus"
+    },
+    {
+      "from": "protocol_can",
+      "to": "data_bus",
+      "label": "gateway_sensor_publish()",
+      "labelAt": [
+        300,
+        430
+      ]
+    },
+    {
+      "from": "protocol_modbus",
+      "to": "data_bus"
+    },
+    {
+      "from": "data_bus",
+      "to": "anomaly_detection"
+    },
+    {
+      "from": "data_bus",
+      "to": "cloud_upload",
+      "label": "consumer 订阅",
+      "variant": "emphasis",
+      "labelDy": 45
+    },
+    {
+      "from": "anomaly_detection",
+      "to": "cloud_upload",
+      "label": "EVENT_TYPE_ANOMALY_*",
+      "labelAt": [
+        690,
+        266
+      ]
+    },
+    {
+      "from": "cloud_upload",
+      "to": "cloud_provider",
+      "label": "cloud_provider_publish_all()",
+      "variant": "emphasis",
+      "labelAt": [
+        715,
+        396
+      ]
+    },
+    {
+      "from": "cloud_provider",
+      "to": "cloud_private"
+    },
+    {
+      "from": "cloud_provider",
+      "to": "cloud_aliyun"
+    },
+    {
+      "from": "cloud_provider",
+      "to": "cloud_tencent"
+    },
+    {
+      "from": "cloud_provider",
+      "to": "cloud_aws"
+    },
+    {
+      "from": "cloud_private",
+      "to": "protocol_mqtt"
+    },
+    {
+      "from": "cloud_aliyun",
+      "to": "protocol_mqtt"
+    },
+    {
+      "from": "cloud_tencent",
+      "to": "protocol_mqtt"
+    },
+    {
+      "from": "cloud_aws",
+      "to": "protocol_mqtt"
+    },
+    {
+      "from": "network_manager",
+      "to": "protocol_mqtt",
+      "label": "EVENT_TYPE_NET_UP/DOWN",
+      "labelAt": [
+        1255,
+        279
+      ]
+    },
+    {
+      "from": "cloud_upload",
+      "to": "offline_cache",
+      "label": "EVENT_TYPE_CLOUD_UPLOAD 转存",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        712,
+        480
+      ]
+    },
+    {
+      "from": "offline_cache",
+      "to": "cloud_upload",
+      "label": "EVENT_TYPE_CLOUD_REPLAY 回放",
+      "variant": "dashed",
+      "labelAt": [
+        400,
+        480
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "双总线分工",
+      "items": [
+        "data_bus 承载高频传感器数据（零拷贝扇出）",
+        "event_system 承载异常/网络/上云等低频事件",
+        "两条总线在 cloud_upload 汇合"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "多云 Provider 抽象",
+      "items": [
+        "四个 Provider 实现同一 cloud_provider_t 接口",
+        "publish_all 全部失败才触发离线缓存",
+        "当前共享 protocol_mqtt 的单一 MQTT 连接"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "断网续传",
+      "items": [
+        "NVS 环形队列，写满覆盖最旧条目",
+        "protocol_mqtt 以 CLOUD_CONNECTED/DISCONNECTED 触发批量重播",
+        "CLOUD_UPLOAD（缓存）与 CLOUD_REPLAY（回放）语义分流"
+      ]
+    }
+  ]
+}

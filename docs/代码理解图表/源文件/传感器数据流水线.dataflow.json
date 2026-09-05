@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "传感器数据流水线 — 采集到出口",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      720
+    ]
+  },
+  "stages": [
+    {
+      "label": "采集源"
+    },
+    {
+      "label": "数据总线"
+    },
+    {
+      "label": "业务消费"
+    },
+    {
+      "label": "分发上云"
+    },
+    {
+      "label": "出口"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "data_simulator",
+      "type": "backend",
+      "label": "数据模拟采集",
+      "sublabel": "演示数据源",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "protocol_can",
+      "type": "backend",
+      "label": "CAN 采集",
+      "sublabel": "ISR + ring buffer",
+      "stage": 0,
+      "row": 2
+    },
+    {
+      "id": "protocol_modbus",
+      "type": "backend",
+      "label": "Modbus 采集",
+      "sublabel": "RTU 主站轮询",
+      "stage": 0,
+      "row": 4
+    },
+    {
+      "id": "data_bus",
+      "type": "messagebus",
+      "label": "通道 sensor",
+      "sublabel": "gateway_sensor_data_t",
+      "stage": 1,
+      "row": 2,
+      "tag": "零拷贝扇出"
+    },
+    {
+      "id": "anomaly_detection",
+      "type": "backend",
+      "label": "异常检测",
+      "sublabel": "滑动窗口 μ/σ",
+      "stage": 2,
+      "row": 0
+    },
+    {
+      "id": "cloud_upload",
+      "type": "backend",
+      "label": "数据上云",
+      "sublabel": "JSON + 速率控制",
+      "stage": 2,
+      "row": 2
+    },
+    {
+      "id": "cloud_provider",
+      "type": "backend",
+      "label": "Provider 注册表",
+      "sublabel": "publish_all",
+      "stage": 3,
+      "row": 1,
+      "tag": "k_mutex 保护"
+    },
+    {
+      "id": "providers_mqtt",
+      "type": "cloud",
+      "label": "云平台 ×4",
+      "sublabel": "MQTT 上行",
+      "stage": 4,
+      "row": 0,
+      "tag": "共享单连接"
+    },
+    {
+      "id": "offline_nvs",
+      "type": "database",
+      "label": "NVS 离线缓存",
+      "sublabel": "环形队列",
+      "stage": 4,
+      "row": 3,
+      "tag": "可跨重启"
+    }
+  ],
+  "flows": [
+    {
+      "id": "f_sim",
+      "from": "data_simulator",
+      "to": "data_bus",
+      "label": "模拟采样发布",
+      "classification": "高频 data_bus",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "f_can",
+      "from": "protocol_can",
+      "to": "data_bus",
+      "label": "CAN 帧解析发布",
+      "classification": "高频 data_bus",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        155,
+        320
+      ]
+    },
+    {
+      "id": "f_modbus",
+      "from": "protocol_modbus",
+      "to": "data_bus",
+      "label": "gateway_sensor_publish()",
+      "classification": "高频 data_bus",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "f_anomaly",
+      "from": "data_bus",
+      "to": "anomaly_detection",
+      "label": "基线样本输入",
+      "classification": "高频消费",
+      "labelAt": [
+        420,
+        280
+      ]
+    },
+    {
+      "id": "f_upload",
+      "from": "data_bus",
+      "to": "cloud_upload",
+      "label": "consumer 订阅",
+      "classification": "高频消费",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight",
+      "labelAt": [
+        420,
+        430
+      ]
+    },
+    {
+      "id": "f_anomaly_evt",
+      "from": "anomaly_detection",
+      "to": "cloud_upload",
+      "label": "EVENT_TYPE_ANOMALY_*",
+      "classification": "低频 event_system",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        530,
+        290
+      ]
+    },
+    {
+      "id": "f_publish",
+      "from": "cloud_upload",
+      "to": "cloud_provider",
+      "label": "cloud_provider_publish_all()",
+      "classification": "同步调用",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        650,
+        428
+      ]
+    },
+    {
+      "id": "f_up",
+      "from": "cloud_provider",
+      "to": "providers_mqtt",
+      "label": "publish()",
+      "classification": "遥测 + 异常",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "f_cache",
+      "from": "cloud_upload",
+      "to": "offline_nvs",
+      "label": "CLOUD_UPLOAD 转存（断网/队满）",
+      "classification": "低频 event_system",
+      "variant": "dashed",
+      "route": "bottom-channel",
+      "labelAt": [
+        640,
+        565
+      ],
+      "fromSide": "bottom",
+      "toSide": "bottom"
+    },
+    {
+      "id": "f_replay",
+      "from": "offline_nvs",
+      "to": "cloud_upload",
+      "label": "CLOUD_REPLAY 回放直发",
+      "classification": "低频 event_system",
+      "variant": "dashed",
+      "route": "top-channel"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "主数据通路",
+      "items": [
+        "高频采样走 data_bus 通道 sensor，零拷贝多消费者扇出",
+        "异常与转存走 event_system 低频类型化事件",
+        "双总线在 cloud_upload 汇合后统一 JSON 化"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "断网续传回路",
+      "items": [
+        "全部 Provider 失败或上传队满时转存 NVS",
+        "网络恢复后以 CLOUD_REPLAY 直发，不回上传队列",
+        "环形队列写满覆盖最旧，条目可跨重启存活"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "预留与限制",
+      "items": [
+        "can_raw / modbus_raw 原始通道已预留，当前无消费者",
+        "四个 Provider 共享 protocol_mqtt 单一 MQTT 连接",
+        "时间戳为 uptime 单调毫秒，尚未对齐 wall-clock"
+      ]
+    }
+  ]
+}

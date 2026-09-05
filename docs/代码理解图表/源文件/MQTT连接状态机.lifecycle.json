@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "MQTT 连接状态机 — protocol_mqtt",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [
+      780,
+      566
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "连接推进"
+    },
+    {
+      "id": "interruptions",
+      "label": "断开触发"
+    }
+  ],
+  "states": [
+    {
+      "id": "disconnected",
+      "type": "start",
+      "label": "DISCONNECTED",
+      "sublabel": "NET_UP 后按退避间隔重试",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "失败退避 ×2 · 上限 60s"
+    },
+    {
+      "id": "connecting",
+      "type": "active",
+      "label": "CONNECTING",
+      "sublabel": "mqtt_connect() 已发出",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "connected",
+      "type": "active",
+      "label": "CONNECTED",
+      "sublabel": "CONNACK 已收到",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "subscribed",
+      "type": "success",
+      "label": "SUBSCRIBED",
+      "sublabel": "已订阅 cmd 主题 · 可收发",
+      "lane": "main",
+      "col": 3,
+      "step": "04"
+    },
+    {
+      "id": "force_disconnect",
+      "type": "external",
+      "label": "强制断开",
+      "sublabel": "mqtt_do_disconnect()",
+      "lane": "interruptions",
+      "col": 0,
+      "tag": "NET_DOWN / IO 错误 / 参数变更"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "t_connect_err",
+      "from": "connecting",
+      "to": "force_disconnect",
+      "label": "IO 错误",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "drop"
+    },
+    {
+      "id": "t_sub_err",
+      "from": "subscribed",
+      "to": "force_disconnect",
+      "label": "IO 错误 / NET_DOWN",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "drop"
+    },
+    {
+      "id": "t_cleanup",
+      "from": "force_disconnect",
+      "to": "disconnected",
+      "label": "清理后回到初始态重连",
+      "variant": "emphasis",
+      "route": "left-channel",
+      "fromSide": "left",
+      "toSide": "left",
+      "labelAt": [
+        200,
+        298
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "推进条件",
+      "items": [
+        "DISCONNECTED：NET_UP 且距上次尝试 ≥ reconnect_delay 才发起连接",
+        "CONNECTING：mqtt_connect() 返回 0 即进入，等 CONNACK 回调确认",
+        "CONNECTED → SUBSCRIBED：CONNACK 后自动订阅 cmd 主题成功"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "失败退避",
+      "items": [
+        "connect 失败不离开 DISCONNECTED，退避 ×2（1s 起，60s 封顶）",
+        "退避等待发生在 DISCONNECTED 内部，不是独立状态",
+        "mqtt_input/live 返回 -EAGAIN 之外错误即触发断开"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "断开触发源",
+      "items": [
+        "CONNECTING / CONNECTED / SUBSCRIBED 任一状态均可被强制断开",
+        "NET_DOWN 链路断开、运行时 set_broker/set_auth、模块 stop 都会触发",
+        "断开后统一清理 client，回到 DISCONNECTED 等待重连"
+      ]
+    }
+  ]
+}
