@@ -5004,7 +5004,7 @@
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="ARCHIFY / 图版 04">
-      <svg viewBox="0 0 999 1300" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+      <svg viewBox="0 0 1021 846" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">数据上云处理流程 — cloud_upload</title>
         <desc id="archify-diagram-description">由 Archify 生成的工作流图。</desc>
         <!-- Definitions -->
@@ -5030,18 +5030,15 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Swimlanes -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="931" height="266" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="965" height="210" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / 采集 / 数据总线</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="338" width="931" height="266" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="360" class="t-dim" font-size="10" font-weight="600">02 / cloud_upload 上传业务</text>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="282" width="965" height="210" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="304" class="t-dim" font-size="10" font-weight="600">02 / 上传业务 / Provider 分发</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="624" width="931" height="266" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="646" class="t-dim" font-size="10" font-weight="600">03 / 云 Provider 层</text>
-
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="910" width="931" height="266" rx="10" class="c-lane" stroke-width="1"/>
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-3-exception" x="46" y="916" width="919" height="254" rx="8" class="c-security-group" stroke-width="1"/>
-        <text x="54" y="932" class="t-security" font-size="10" font-weight="600">EX / 断网续传</text>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="512" width="965" height="210" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-2-exception" x="46" y="518" width="953" height="198" rx="8" class="c-security-group" stroke-width="1"/>
+        <text x="54" y="534" class="t-security" font-size="10" font-weight="600">EX / 断网续传</text>
 
         <!-- Phase headers -->
         <line x1="66" y1="35" x2="353.4" y2="35" class="a-default" stroke-width="1.1"/>
@@ -5050,173 +5047,173 @@
         <line x1="381.4" y1="35" x2="621.8" y2="35" class="a-emphasis" stroke-width="1.1"/>
         <rect x="381.4" y="27" width="240.39999999999998" height="16" rx="4" class="c-mask"/>
         <text x="501.59999999999997" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">上传业务</text>
-        <line x1="649.8" y1="35" x2="929" y2="35" class="a-dashed" stroke-width="1.1"/>
-        <rect x="649.8" y="27" width="279.20000000000005" height="16" rx="4" class="c-mask"/>
-        <text x="789.4" y="39" class="t-messagebus" font-size="8" font-weight="600" text-anchor="middle">分发上云</text>
+        <line x1="683" y1="35" x2="962.2" y2="35" class="a-dashed" stroke-width="1.1"/>
+        <rect x="683" y="27" width="279.20000000000005" height="16" rx="4" class="c-mask"/>
+        <text x="822.6" y="39" class="t-messagebus" font-size="8" font-weight="600" text-anchor="middle">分发上云</text>
 
         <!-- Workflow groups -->
 
 
         <!-- Edge paths -->
-        <path data-edge-from="anomaly_evt" data-edge-to="enqueue" data-edge-label="直入队 · 不限流" data-edge-key="0" data-composition-points="307.4,314;307.4,620;427.4,620;427.4,512" d="M 307.4 314 L 307.4 620 L 427.4 620 L 427.4 512" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="data_bus_ch" data-edge-to="enqueue" data-edge-label="间隔节流后入队" data-edge-key="1" data-composition-points="382.4,200;398.4,200;398.4,328;427.4,328;427.4,460" d="M 382.4 200 L 398.4 200 L 398.4 328 L 427.4 328 L 427.4 460" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="enqueue" data-edge-to="offline_cache" data-edge-label="队满转存 CLOUD_UPLOAD" data-edge-key="2" data-composition-points="427.4,512;427.4,757;575.8,757;575.8,1032" d="M 427.4 512 L 427.4 757 L 575.8 757 L 575.8 1032" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="enqueue" data-edge-to="worker" data-edge-label="取出条目" data-edge-key="3" data-composition-points="473.4,486;529.8,486" d="M 473.4 486 L 529.8 486" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="offline_cache" data-edge-to="publish_all" data-edge-label="CLOUD_REPLAY 直发（绕过队列）" data-edge-key="4" data-composition-points="575.8,1032;575.8,718;695.8,718;695.8,746" d="M 575.8 1032 L 575.8 718 L 695.8 718 L 695.8 746" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="publish_all" data-edge-to="offline_cache" data-edge-label="全部失败转存" data-edge-key="5" data-composition-points="695.8,798;695.8,1058;621.8,1058" d="M 695.8 798 L 695.8 1058 L 621.8 1058" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="publish_all" data-edge-to="providers" data-edge-label="publish()" data-edge-key="6" data-composition-points="741.8,772;803,772" d="M 741.8 772 L 803 772" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="sensor_sample" data-edge-to="data_bus_ch" data-edge-label="采样发布" data-edge-key="7" data-composition-points="176,200;232.39999999999998,200" d="M 176 200 L 232.39999999999998 200" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="worker" data-edge-to="publish_all" data-edge-label="JSON 载荷" data-edge-key="8" data-composition-points="621.8,486;983,486;983,814;695.8,814;695.8,798" d="M 621.8 486 L 983 486 L 983 814 L 695.8 814 L 695.8 798" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="anomaly_evt" data-edge-to="enqueue" data-edge-label="直入队 · 不限流" data-edge-key="0" data-composition-points="307.4,258;307.4,508;427.4,508;427.4,428" d="M 307.4 258 L 307.4 508 L 427.4 508 L 427.4 428" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="data_bus_ch" data-edge-to="enqueue" data-edge-label="间隔节流后入队" data-edge-key="1" data-composition-points="382.4,172;398.4,172;398.4,272;427.4,272;427.4,376" d="M 382.4 172 L 398.4 172 L 398.4 272 L 427.4 272 L 427.4 376" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="enqueue" data-edge-to="offline_cache" data-edge-label="队满转存 CLOUD_UPLOAD" data-edge-key="2" data-composition-points="427.4,428;427.4,502;575.8,502;575.8,606" d="M 427.4 428 L 427.4 502 L 575.8 502 L 575.8 606" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="enqueue" data-edge-to="worker" data-edge-label="取出条目" data-edge-key="3" data-composition-points="473.4,402;529.8,402" d="M 473.4 402 L 529.8 402" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="offline_cache" data-edge-to="publish_all" data-edge-label="CLOUD_REPLAY 直发（绕过队列）" data-edge-key="4" data-composition-points="575.8,658;575.8,738;729,738;729,428" d="M 575.8 658 L 575.8 738 L 729 738 L 729 428" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="publish_all" data-edge-to="offline_cache" data-edge-label="全部失败转存" data-edge-key="5" data-composition-points="736,428;736,639;621.8,639" d="M 736 428 L 736 639 L 621.8 639" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="publish_all" data-edge-to="providers" data-edge-label="publish()" data-edge-key="6" data-composition-points="775,402;836.2,402" d="M 775 402 L 836.2 402" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="sensor_sample" data-edge-to="data_bus_ch" data-edge-label="采样发布" data-edge-key="7" data-composition-points="176,172;232.39999999999998,172" d="M 176 172 L 232.39999999999998 172" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="worker" data-edge-to="publish_all" data-edge-label="JSON 载荷" data-edge-key="8" data-composition-points="621.8,402;683,402" d="M 621.8 402 L 683 402" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
 
         <!-- Nodes -->
         <g id="node-sensor_sample" data-node-id="sensor_sample" data-node-label="传感器采样" tabindex="0" role="button" aria-label="聚焦传感器采样，simulator / CAN / Modbus, 采集 / 数据总线 › 采集" aria-pressed="false" data-node-kind="backend" data-node-sublabel="simulator / CAN / Modbus" data-node-context="采集 / 数据总线 › 采集">
           <title>传感器采样 · simulator / CAN / Modbus · 采集 / 数据总线 › 采集</title>
-          <rect x="48" y="174" width="128" height="52" rx="6" class="c-mask"/>
-          <rect x="48" y="174" width="128" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(54 180) scale(0.6875)">
+          <rect x="48" y="146" width="128" height="52" rx="6" class="c-mask"/>
+          <rect x="48" y="146" width="128" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(54 152) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="112" y="195" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">传感器采样</text>
-          <text data-detail="context" x="112" y="212" class="t-muted" font-size="8" text-anchor="middle">simulator / CAN / Modbus</text>
+          <text data-node-label="" data-detail-anchor="" x="112" y="167" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">传感器采样</text>
+          <text data-detail="context" x="112" y="184" class="t-muted" font-size="8" text-anchor="middle">simulator / CAN / Modbus</text>
         </g>
 
         <g id="node-anomaly_evt" data-node-id="anomaly_evt" data-node-label="异常分级事件" tabindex="0" role="button" aria-label="聚焦异常分级事件，EVENT_TYPE_ANOMALY_*, 采集 / 数据总线 › 采集" aria-pressed="false" data-node-kind="backend" data-node-sublabel="EVENT_TYPE_ANOMALY_*" data-node-context="采集 / 数据总线 › 采集">
           <title>异常分级事件 · EVENT_TYPE_ANOMALY_* · 采集 / 数据总线 › 采集</title>
-          <rect x="261.4" y="262" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="261.4" y="262" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(267.4 268) scale(0.6875)">
+          <rect x="261.4" y="206" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="261.4" y="206" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(267.4 212) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="307.4" y="283" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">异常分级事件</text>
-          <text data-detail="context" x="307.4" y="300" class="t-muted" font-size="7" text-anchor="middle">EVENT_TYPE_ANOMALY_*</text>
+          <text data-node-label="" data-detail-anchor="" x="307.4" y="227" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">异常分级事件</text>
+          <text data-detail="context" x="307.4" y="244" class="t-muted" font-size="7" text-anchor="middle">EVENT_TYPE_ANOMALY_*</text>
         </g>
 
         <g id="node-data_bus_ch" data-node-id="data_bus_ch" data-node-label="data_bus 通道 sensor" tabindex="0" role="button" aria-label="聚焦data_bus 通道 sensor，gateway_sensor_publish(), 采集 / 数据总线 › 采集" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="gateway_sensor_publish()" data-node-context="采集 / 数据总线 › 采集">
           <title>data_bus 通道 sensor · gateway_sensor_publish() · 采集 / 数据总线 › 采集</title>
-          <rect x="232.39999999999998" y="174" width="150" height="52" rx="6" class="c-mask"/>
-          <rect x="232.39999999999998" y="174" width="150" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(238.39999999999998 180) scale(0.6875)">
+          <rect x="232.39999999999998" y="146" width="150" height="52" rx="6" class="c-mask"/>
+          <rect x="232.39999999999998" y="146" width="150" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(238.39999999999998 152) scale(0.6875)">
             <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
             <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
             <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
             <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="307.4" y="195" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">data_bus 通道 sensor</text>
-          <text data-detail="context" x="307.4" y="212" class="t-muted" font-size="8" text-anchor="middle">gateway_sensor_publish()</text>
+          <text data-node-label="" data-detail-anchor="" x="307.4" y="167" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">data_bus 通道 sensor</text>
+          <text data-detail="context" x="307.4" y="184" class="t-muted" font-size="8" text-anchor="middle">gateway_sensor_publish()</text>
         </g>
 
-        <g id="node-enqueue" data-node-id="enqueue" data-node-label="回调拷贝入队" tabindex="0" role="button" aria-label="聚焦回调拷贝入队，k_msgq · K_NO_WAIT, cloud_upload 上传业务 › 上传业务" aria-pressed="false" data-node-kind="backend" data-node-sublabel="k_msgq · K_NO_WAIT" data-node-context="cloud_upload 上传业务 › 上传业务">
-          <title>回调拷贝入队 · k_msgq · K_NO_WAIT · cloud_upload 上传业务 › 上传业务</title>
-          <rect x="381.4" y="460" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="381.4" y="460" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(387.4 466) scale(0.6875)">
+        <g id="node-enqueue" data-node-id="enqueue" data-node-label="回调拷贝入队" tabindex="0" role="button" aria-label="聚焦回调拷贝入队，k_msgq · K_NO_WAIT, 上传业务 / Provider 分发 › 上传业务" aria-pressed="false" data-node-kind="backend" data-node-sublabel="k_msgq · K_NO_WAIT" data-node-context="上传业务 / Provider 分发 › 上传业务">
+          <title>回调拷贝入队 · k_msgq · K_NO_WAIT · 上传业务 / Provider 分发 › 上传业务</title>
+          <rect x="381.4" y="376" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="381.4" y="376" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(387.4 382) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="427.4" y="481" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">回调拷贝入队</text>
-          <text data-detail="context" x="427.4" y="498" class="t-muted" font-size="7.7" text-anchor="middle">k_msgq · K_NO_WAIT</text>
+          <text data-node-label="" data-detail-anchor="" x="427.4" y="397" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">回调拷贝入队</text>
+          <text data-detail="context" x="427.4" y="414" class="t-muted" font-size="7.7" text-anchor="middle">k_msgq · K_NO_WAIT</text>
         </g>
 
-        <g id="node-worker" data-node-id="worker" data-node-label="专用上传线程" tabindex="0" role="button" aria-label="聚焦专用上传线程，JSON 序列化, cloud_upload 上传业务 › 上传业务" aria-pressed="false" data-node-kind="backend" data-node-sublabel="JSON 序列化" data-node-context="cloud_upload 上传业务 › 上传业务">
-          <title>专用上传线程 · JSON 序列化 · cloud_upload 上传业务 › 上传业务</title>
-          <rect x="529.8" y="460" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="529.8" y="460" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(535.8 466) scale(0.6875)">
+        <g id="node-worker" data-node-id="worker" data-node-label="专用上传线程" tabindex="0" role="button" aria-label="聚焦专用上传线程，JSON 序列化, 上传业务 / Provider 分发 › 上传业务" aria-pressed="false" data-node-kind="backend" data-node-sublabel="JSON 序列化" data-node-context="上传业务 / Provider 分发 › 上传业务">
+          <title>专用上传线程 · JSON 序列化 · 上传业务 / Provider 分发 › 上传业务</title>
+          <rect x="529.8" y="376" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="529.8" y="376" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(535.8 382) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="575.8" y="481" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">专用上传线程</text>
-          <text data-detail="context" x="575.8" y="498" class="t-muted" font-size="8" text-anchor="middle">JSON 序列化</text>
+          <text data-node-label="" data-detail-anchor="" x="575.8" y="397" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">专用上传线程</text>
+          <text data-detail="context" x="575.8" y="414" class="t-muted" font-size="8" text-anchor="middle">JSON 序列化</text>
         </g>
 
-        <g id="node-publish_all" data-node-id="publish_all" data-node-label="publish_all" tabindex="0" role="button" aria-label="聚焦publish_all，cloud_provider 多播, 云 Provider 层 › 分发上云" aria-pressed="false" data-node-kind="backend" data-node-sublabel="cloud_provider 多播" data-node-context="云 Provider 层 › 分发上云">
-          <title>publish_all · cloud_provider 多播 · 云 Provider 层 › 分发上云</title>
-          <rect x="649.8" y="746" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="649.8" y="746" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(655.8 752) scale(0.6875)">
+        <g id="node-publish_all" data-node-id="publish_all" data-node-label="publish_all" tabindex="0" role="button" aria-label="聚焦publish_all，cloud_provider 多播, 上传业务 / Provider 分发 › 分发上云" aria-pressed="false" data-node-kind="backend" data-node-sublabel="cloud_provider 多播" data-node-context="上传业务 / Provider 分发 › 分发上云">
+          <title>publish_all · cloud_provider 多播 · 上传业务 / Provider 分发 › 分发上云</title>
+          <rect x="683" y="376" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="683" y="376" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(689 382) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="695.8" y="767" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">publish_all</text>
-          <text data-detail="context" x="695.8" y="784" class="t-muted" font-size="7.3" text-anchor="middle">cloud_provider 多播</text>
+          <text data-node-label="" data-detail-anchor="" x="729" y="397" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">publish_all</text>
+          <text data-detail="context" x="729" y="414" class="t-muted" font-size="7.3" text-anchor="middle">cloud_provider 多播</text>
         </g>
 
-        <g id="node-providers" data-node-id="providers" data-node-label="已注册 Provider" tabindex="0" role="button" aria-label="聚焦已注册 Provider，private / aliyun / tencent / aws, 云 Provider 层 › 分发上云" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="private / aliyun / tencent / aws" data-node-context="云 Provider 层 › 分发上云">
-          <title>已注册 Provider · private / aliyun / tencent / aws · 云 Provider 层 › 分发上云</title>
-          <rect x="803" y="746" width="160" height="52" rx="6" class="c-mask"/>
-          <rect x="803" y="746" width="160" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(809 752) scale(0.6875)">
+        <g id="node-providers" data-node-id="providers" data-node-label="已注册 Provider" tabindex="0" role="button" aria-label="聚焦已注册 Provider，private / aliyun / tencent / aws, 上传业务 / Provider 分发 › 分发上云" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="private / aliyun / tencent / aws" data-node-context="上传业务 / Provider 分发 › 分发上云">
+          <title>已注册 Provider · private / aliyun / tencent / aws · 上传业务 / Provider 分发 › 分发上云</title>
+          <rect x="836.2" y="376" width="160" height="52" rx="6" class="c-mask"/>
+          <rect x="836.2" y="376" width="160" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(842.2 382) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="883" y="767" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">已注册 Provider</text>
-          <text data-detail="context" x="883" y="784" class="t-muted" font-size="7.9" text-anchor="middle">private / aliyun / tencent / aws</text>
+          <text data-node-label="" data-detail-anchor="" x="916.2" y="397" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">已注册 Provider</text>
+          <text data-detail="context" x="916.2" y="414" class="t-muted" font-size="7.9" text-anchor="middle">private / aliyun / tencent / aws</text>
         </g>
 
         <g id="node-offline_cache" data-node-id="offline_cache" data-node-label="offline_cache" tabindex="0" role="button" aria-label="聚焦offline_cache，NVS 环形队列, 断网续传 › 上传业务" aria-pressed="false" data-node-kind="database" data-node-sublabel="NVS 环形队列" data-node-context="断网续传 › 上传业务">
           <title>offline_cache · NVS 环形队列 · 断网续传 › 上传业务</title>
-          <rect x="529.8" y="1032" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="529.8" y="1032" width="92" height="52" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(535.8 1038) scale(0.6875)">
+          <rect x="529.8" y="606" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="529.8" y="606" width="92" height="52" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(535.8 612) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="575.8" y="1053" class="t-primary" font-size="10.7" font-weight="600" text-anchor="middle">offline_cache</text>
-          <text data-detail="context" x="575.8" y="1070" class="t-muted" font-size="8" text-anchor="middle">NVS 环形队列</text>
+          <text data-node-label="" data-detail-anchor="" x="575.8" y="627" class="t-primary" font-size="10.7" font-weight="600" text-anchor="middle">offline_cache</text>
+          <text data-detail="context" x="575.8" y="644" class="t-muted" font-size="8" text-anchor="middle">NVS 环形队列</text>
         </g>
 
         <!-- Edge labels -->
         <g data-detail="context" data-edge-from="anomaly_evt" data-edge-to="enqueue" data-edge-label="直入队 · 不限流" data-edge-key="0">
-          <rect x="326.4" y="600" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="367.4" y="610" class="t-muted" font-size="8" text-anchor="middle">直入队 · 不限流</text>
+          <rect x="326.4" y="488" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="367.4" y="498" class="t-muted" font-size="8" text-anchor="middle">直入队 · 不限流</text>
         </g>
         <g data-detail="context" data-edge-from="data_bus_ch" data-edge-to="enqueue" data-edge-label="间隔节流后入队" data-edge-key="1">
-          <rect x="374.29999999999995" y="308" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="412.9" y="318" class="t-backend" font-size="8" text-anchor="middle">间隔节流后入队</text>
+          <rect x="374.29999999999995" y="252" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="412.9" y="262" class="t-backend" font-size="8" text-anchor="middle">间隔节流后入队</text>
         </g>
         <g data-detail="context" data-edge-from="enqueue" data-edge-to="offline_cache" data-edge-label="队满转存 CLOUD_UPLOAD" data-edge-key="2">
-          <rect x="446.2" y="737" width="110.8" height="14" rx="3" class="c-mask"/>
-          <text x="501.59999999999997" y="747" class="t-database" font-size="8" text-anchor="middle">队满转存 CLOUD_UPLOAD</text>
+          <rect x="446.2" y="482" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="501.59999999999997" y="492" class="t-database" font-size="8" text-anchor="middle">队满转存 CLOUD_UPLOAD</text>
         </g>
         <g data-detail="context" data-edge-from="enqueue" data-edge-to="worker" data-edge-label="取出条目" data-edge-key="3">
-          <rect x="477.4" y="466" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="501.59999999999997" y="476" class="t-muted" font-size="8" text-anchor="middle">取出条目</text>
+          <rect x="477.4" y="382" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="501.59999999999997" y="392" class="t-muted" font-size="8" text-anchor="middle">取出条目</text>
         </g>
         <g data-detail="context" data-edge-from="offline_cache" data-edge-to="publish_all" data-edge-label="CLOUD_REPLAY 直发（绕过队列）" data-edge-key="4">
-          <rect x="561.1999999999999" y="698" width="149.2" height="14" rx="3" class="c-mask"/>
-          <text x="635.8" y="708" class="t-muted" font-size="8" text-anchor="middle">CLOUD_REPLAY 直发（绕过队列）</text>
+          <rect x="577.8" y="718" width="149.2" height="14" rx="3" class="c-mask"/>
+          <text x="652.4" y="728" class="t-muted" font-size="8" text-anchor="middle">CLOUD_REPLAY 直发（绕过队列）</text>
         </g>
         <g data-detail="context" data-edge-from="publish_all" data-edge-to="offline_cache" data-edge-label="全部失败转存" data-edge-key="5">
-          <rect x="625" y="1038" width="67.6" height="14" rx="3" class="c-mask"/>
-          <text x="658.8" y="1048" class="t-database" font-size="8" text-anchor="middle">全部失败转存</text>
+          <rect x="645.1" y="619" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="678.9" y="629" class="t-database" font-size="8" text-anchor="middle">全部失败转存</text>
         </g>
         <g data-detail="context" data-edge-from="publish_all" data-edge-to="providers" data-edge-label="publish()" data-edge-key="6">
-          <rect x="745.8" y="752" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
-          <text x="772.4" y="762" class="t-backend" font-size="8" text-anchor="middle">publish()</text>
+          <rect x="779" y="382" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="805.6" y="392" class="t-backend" font-size="8" text-anchor="middle">publish()</text>
         </g>
         <g data-detail="context" data-edge-from="sensor_sample" data-edge-to="data_bus_ch" data-edge-label="采样发布" data-edge-key="7">
-          <rect x="180" y="180" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="204.2" y="190" class="t-muted" font-size="8" text-anchor="middle">采样发布</text>
+          <rect x="180" y="152" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="204.2" y="162" class="t-muted" font-size="8" text-anchor="middle">采样发布</text>
         </g>
         <g data-detail="context" data-edge-from="worker" data-edge-to="publish_all" data-edge-label="JSON 载荷" data-edge-key="8">
-          <rect x="775.8" y="466" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
-          <text x="802.4" y="476" class="t-muted" font-size="8" text-anchor="middle">JSON 载荷</text>
+          <rect x="625.8" y="382" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="652.4" y="392" class="t-muted" font-size="8" text-anchor="middle">JSON 载荷</text>
         </g>
 
         <!-- Legend -->
         <g data-legend="" data-legend-bridge="">
-          <text x="20" y="1200" class="t-primary" font-size="12" font-weight="650">图例</text>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Agent 逻辑" data-legend-x="20" data-legend-baseline="1220" data-legend-width="87">
-            <rect x="20" y="1212" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
-            <text x="42" y="1220" class="t-muted" font-size="7.5" font-weight="500">Agent 逻辑</text>
+          <text x="20" y="746" class="t-primary" font-size="12" font-weight="650">图例</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Agent 逻辑" data-legend-x="20" data-legend-baseline="766" data-legend-width="87">
+            <rect x="20" y="758" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="42" y="766" class="t-muted" font-size="7.5" font-weight="500">Agent 逻辑</text>
           </g>
-          <g data-legend-semantic-kind="messagebus" data-legend-kind="messagebus" data-legend-label="工具操作" data-legend-x="114" data-legend-baseline="1220" data-legend-width="78">
-            <rect x="114" y="1212" width="14" height="9" rx="2" class="c-messagebus" stroke-width="1"/>
-            <text x="136" y="1220" class="t-muted" font-size="7.5" font-weight="500">工具操作</text>
+          <g data-legend-semantic-kind="messagebus" data-legend-kind="messagebus" data-legend-label="工具操作" data-legend-x="114" data-legend-baseline="766" data-legend-width="78">
+            <rect x="114" y="758" width="14" height="9" rx="2" class="c-messagebus" stroke-width="1"/>
+            <text x="136" y="766" class="t-muted" font-size="7.5" font-weight="500">工具操作</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="上下文 / 追踪" data-legend-x="199" data-legend-baseline="1220" data-legend-width="100">
-            <rect x="199" y="1212" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-            <text x="221" y="1220" class="t-muted" font-size="7.5" font-weight="500">上下文 / 追踪</text>
+          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="上下文 / 追踪" data-legend-x="199" data-legend-baseline="766" data-legend-width="100">
+            <rect x="199" y="758" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+            <text x="221" y="766" class="t-muted" font-size="7.5" font-weight="500">上下文 / 追踪</text>
           </g>
-          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="云服务" data-legend-x="306" data-legend-baseline="1220" data-legend-width="70">
-            <rect x="306" y="1212" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
-            <text x="328" y="1220" class="t-muted" font-size="7.5" font-weight="500">云服务</text>
+          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="云服务" data-legend-x="306" data-legend-baseline="766" data-legend-width="70">
+            <rect x="306" y="758" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
+            <text x="328" y="766" class="t-muted" font-size="7.5" font-weight="500">云服务</text>
           </g>
         </g>
       </svg>

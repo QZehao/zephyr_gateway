@@ -238,7 +238,7 @@
       "sublabel": "NVS 环形队列 · 断网续传",
       "pos": [
         520,
-        580
+        510
       ],
       "size": [
         150,
@@ -378,7 +378,7 @@
       "toSide": "top",
       "labelAt": [
         712,
-        480
+        440
       ]
     },
     {
@@ -387,8 +387,8 @@
       "label": "EVENT_TYPE_CLOUD_REPLAY 回放",
       "variant": "dashed",
       "labelAt": [
-        400,
-        480
+        420,
+        460
       ]
     }
   ],

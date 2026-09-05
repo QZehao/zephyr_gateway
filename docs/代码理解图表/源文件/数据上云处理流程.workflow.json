@@ -13,11 +13,7 @@
     },
     {
       "id": "upload",
-      "label": "cloud_upload 上传业务"
-    },
-    {
-      "id": "providers",
-      "label": "云 Provider 层"
+      "label": "上传业务 / Provider 分发"
     },
     {
       "id": "offline",
@@ -81,7 +77,7 @@
       "type": "backend",
       "label": "异常分级事件",
       "sublabel": "EVENT_TYPE_ANOMALY_*",
-      "yOffset": 88
+      "yOffset": 60
     },
     {
       "id": "enqueue",
@@ -101,7 +97,7 @@
     },
     {
       "id": "publish_all",
-      "lane": "providers",
+      "lane": "upload",
       "col": 4,
       "type": "backend",
       "label": "publish_all",
@@ -109,7 +105,7 @@
     },
     {
       "id": "providers",
-      "lane": "providers",
+      "lane": "upload",
       "col": 5,
       "type": "cloud",
       "label": "已注册 Provider",
@@ -180,8 +176,7 @@
       "from": "offline_cache",
       "to": "publish_all",
       "label": "CLOUD_REPLAY 直发（绕过队列）",
-      "role": "return",
-      "route": "up-channel"
+      "role": "return"
     }
   ],
   "cards": [
